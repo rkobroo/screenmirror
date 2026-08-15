@@ -31,7 +31,7 @@ jobs:
       - name: Build release APK
         working-directory: android-app
         run: |
-          flutter build apk --release --split-per-abi > build.log 2>&1
+          flutter build apk --release > build.log 2>&1
           code=$?
           if [ $code -ne 0 ]; then
             echo "::group::Android build failed"
@@ -145,7 +145,7 @@ jobs:
             Automated build of ${{ github.ref_name }}.
 
             ## Download
-            - **Android** — install the `arm64-v8a` APK on modern devices (or `armeabi-v7a` for older ones).
+            - **Android** — install the universal `app-release.apk` (works on arm64, armeabi-v7a, and x86_64 devices).
             - **Windows** — extract `MirrorLink-Windows.zip` and run `mirrorlink_windows.exe`.
 
             ## Features
