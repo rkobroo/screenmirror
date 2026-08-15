@@ -3,7 +3,7 @@ package com.mirrorlink.android
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.media.projection.MediaProjection
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -19,12 +19,10 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStreamTrack
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
-import org.webrtc.RTCDataChannel
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceTextureHelper
-import org.webrtc.TextureBuffer
 import org.webrtc.VideoFrame
 import org.webrtc.VideoTrack
 import java.nio.ByteBuffer
@@ -77,8 +75,8 @@ class RtcEngine(
     private lateinit var videoTrack: VideoTrack
 
     private var capturer: ScreenCapturerAndroid? = null
-    private var controlChannel: RTCDataChannel? = null
-    private var filesChannel: RTCDataChannel? = null
+    private var controlChannel: DataChannel? = null
+    private var filesChannel: DataChannel? = null
 
     private var running = false
     private var clipboardWatcherEnabled = false
@@ -142,9 +140,9 @@ class RtcEngine(
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
             .createPeerConnectionFactory()
 
-        // HOST candidates only: phone and PC are on the same LAN.
+        // Phone and PC are on the same LAN; ALL includes host candidates.
         val rtcConfig = PeerConnection.RTCConfiguration(mutableListOf())
-        rtcConfig.iceTransportsType = PeerConnection.IceTransportsType.HOST
+        rtcConfig.iceTransportsType = PeerConnection.IceTransportsType.ALL
 
         peer = factory.createPeerConnection(rtcConfig, pcObserver)!!
 
@@ -154,8 +152,8 @@ class RtcEngine(
         peer.addTrack(videoTrack, listOf(MediaStreamTrack.VIDEO_TRACK_KIND))
 
         // Phone-owned data channels (docs/PROTOCOL.md §6).
-        controlChannel = peer.createDataChannel(CONTROL, RTCDataChannel.Init())
-        filesChannel = peer.createDataChannel(FILES, RTCDataChannel.Init())
+        controlChannel = peer.createDataChannel(CONTROL, DataChannel.Init())
+        filesChannel = peer.createDataChannel(FILES, DataChannel.Init())
         controlChannel?.registerObserver(controlObserver)
         filesChannel?.registerObserver(filesObserver)
 
@@ -169,8 +167,8 @@ class RtcEngine(
         setClipboardWatcher(config.clipboardSync)
     }
 
-    /** Hand the MediaProjection to the capturer and begin streaming frames. */
-    fun attachProjection(projection: MediaProjection) {
+    /** Hand the MediaProjection result Intent to the capturer and begin streaming frames. */
+    fun attachProjection(resultData: Intent) {
         if (!running) return
         val existing = capturer
         if (existing != null) {
@@ -178,8 +176,8 @@ class RtcEngine(
             existing.dispose()
         }
 
-        val newCapturer = ScreenCapturerAndroid(projection, surfaceTextureHelper)
-        newCapturer.initialize(capturerObserver, surfaceTextureHelper)
+        val newCapturer = ScreenCapturerAndroid(resultData, null)
+        newCapturer.initialize(surfaceTextureHelper, context, capturerObserver)
 
         val displayMetrics = DisplayMetrics()
         (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
@@ -187,8 +185,7 @@ class RtcEngine(
         val (w, h) = fitWithin(displayMetrics.widthPixels, displayMetrics.heightPixels)
 
         surfaceTextureHelper.handler.post {
-            newCapturer.changeCaptureFormat(w, h, 30)
-            newCapturer.startCapture()
+            newCapturer.startCapture(w, h, 30)
         }
         capturer = newCapturer
     }
@@ -415,7 +412,7 @@ class RtcEngine(
         override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) = Unit
         override fun onAddStream(stream: org.webrtc.MediaStream?) = Unit
         override fun onRemoveStream(stream: org.webrtc.MediaStream?) = Unit
-        override fun onDataChannel(channel: RTCDataChannel?) {
+        override fun onDataChannel(channel: DataChannel?) {
             channel ?: return
             when (channel.label()) {
                 CONTROL -> {
@@ -449,17 +446,9 @@ class RtcEngine(
 
         override fun onFrameCaptured(frame: VideoFrame?) {
             frame ?: return
-            videoSource.observer.onFrameCaptured(frame)
+            videoSource.capturerObserver.onFrameCaptured(frame)
             tick()
         }
-
-        override fun onFrameCaptured(textureBuffer: TextureBuffer?) {
-            texture ?: return
-            videoSource.observer.onFrameCaptured(texture)
-            tick()
-        }
-
-        override fun onFrameError(error: Exception?) = Unit
 
         private fun tick() {
             frameCount++
@@ -500,7 +489,7 @@ class RtcEngine(
 
     private var lastConfig: Config? = null
 
-    private val controlObserver = object : RTCDataChannel.Observer {
+    private val controlObserver = object : DataChannel.Observer {
         override fun onBufferedAmountChange(previousAmount: Long) = Unit
         override fun onStateChange() = Unit
         override fun onMessage(buffer: DataChannel.Buffer?) {
@@ -512,7 +501,7 @@ class RtcEngine(
         }
     }
 
-    private val filesObserver = object : RTCDataChannel.Observer {
+    private val filesObserver = object : DataChannel.Observer {
         override fun onBufferedAmountChange(previousAmount: Long) = Unit
         override fun onStateChange() = Unit
         override fun onMessage(buffer: DataChannel.Buffer?) {

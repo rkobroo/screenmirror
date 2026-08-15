@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Path
+import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -47,8 +48,9 @@ class InputAccessibilityService : AccessibilityService() {
         instance = this
     }
 
-    override fun onServiceDisconnected() {
+    override fun onDestroy() {
         instance = null
+        super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
@@ -81,7 +83,13 @@ class InputAccessibilityService : AccessibilityService() {
                     else -> return
                 },
             )
-            "volume" -> injectVolume(json.optString("dir"))
+            "volume" -> injectVolume(
+                when (json.optString("dir")) {
+                    "up" -> KeyEvent.KEYCODE_VOLUME_UP
+                    "down" -> KeyEvent.KEYCODE_VOLUME_DOWN
+                    else -> KeyEvent.KEYCODE_VOLUME_MUTE
+                },
+            )
             "media" -> injectMedia(json.optString("action"))
         }
     }
@@ -171,24 +179,31 @@ class InputAccessibilityService : AccessibilityService() {
     }
 
     private fun injectKey(code: Int, action: Int) {
-        dispatchKeyEvent(KeyEvent(action, code))
+        // AccessibilityService has no public API to inject arbitrary key
+        // events, so route the keys we can actually synthesize.
+        when (code) {
+            KeyEvent.KEYCODE_BACK -> performGlobalAction(GLOBAL_ACTION_BACK)
+            KeyEvent.KEYCODE_HOME -> performGlobalAction(GLOBAL_ACTION_HOME)
+            KeyEvent.KEYCODE_APP_SWITCH -> performGlobalAction(GLOBAL_ACTION_RECENTS)
+            KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE ->
+                if (action == KeyEvent.ACTION_DOWN) injectVolume(code)
+            KeyEvent.KEYCODE_MEDIA_PLAY,
+            KeyEvent.KEYCODE_MEDIA_PAUSE,
+            KeyEvent.KEYCODE_MEDIA_NEXT,
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS,
+            -> dispatchMediaKey(code, action)
+            else -> Unit
+        }
     }
 
-    private fun injectVolume(dir: String) {
-        when (dir) {
-            "up" -> {
-                dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_UP))
-                dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_VOLUME_UP))
-            }
-            "down" -> {
-                dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_DOWN))
-                dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_VOLUME_DOWN))
-            }
-            "mute" -> {
-                dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE))
-                dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_VOLUME_MUTE))
-            }
+    private fun injectVolume(code: Int) {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val direction = when (code) {
+            KeyEvent.KEYCODE_VOLUME_UP -> AudioManager.ADJUST_RAISE
+            KeyEvent.KEYCODE_VOLUME_DOWN -> AudioManager.ADJUST_LOWER
+            else -> AudioManager.ADJUST_MUTE
         }
+        audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0)
     }
 
     private fun injectMedia(action: String) {
@@ -199,8 +214,13 @@ class InputAccessibilityService : AccessibilityService() {
             "prev" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
             else -> return
         }
-        dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, code))
-        dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, code))
+        dispatchMediaKey(code, KeyEvent.ACTION_DOWN)
+        dispatchMediaKey(code, KeyEvent.ACTION_UP)
+    }
+
+    private fun dispatchMediaKey(code: Int, action: Int) {
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audio.dispatchMediaKeyEvent(KeyEvent(action, code))
     }
 
     /** Type arbitrary text using clipboard + paste, which handles any charset. */
@@ -213,7 +233,11 @@ class InputAccessibilityService : AccessibilityService() {
         // Place a cursor at the end of the target field, then paste.
         val end = focused.textSelectionEnd
         if (end >= 0) {
-            focused.setSelection(end, end)
+            val args = android.os.Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, end)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, end)
+            }
+            focused.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
         }
         focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
     }

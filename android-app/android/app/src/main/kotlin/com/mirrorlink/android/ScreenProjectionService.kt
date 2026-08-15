@@ -7,20 +7,18 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 
 /**
- * Foreground service that owns the [MediaProjection]. Because Android 14+
+ * Foreground service that owns the MediaProjection session. Because Android 14+
  * requires the projection token to be created inside a
- * `foregroundServiceType="mediaProjection"` service, the projection is
- * acquired here and handed to the running [RtcEngine] via [RtcEngineHolder].
+ * `foregroundServiceType="mediaProjection"` service, the screen capture is
+ * started here. The result [Intent] is handed to the running [RtcEngine] via
+ * [RtcEngineHolder]; [ScreenCapturerAndroid] acquires its own MediaProjection
+ * from it (webrtc-sdk 125 API).
  */
 class ScreenProjectionService : Service() {
-
-    private var projection: MediaProjection? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -42,10 +40,8 @@ class ScreenProjectionService : Service() {
             startForeground(NOTIFICATION_ID, buildNotification())
         }
 
-        if (resultCode == RESULT_OK && data != null) {
-            val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            projection = manager.getMediaProjection(resultCode, data)
-            RtcEngineHolder.engine?.attachProjection(projection)
+        if (resultCode == android.app.Activity.RESULT_OK && data != null) {
+            RtcEngineHolder.engine?.attachProjection(data)
         } else {
             RtcEngineHolder.engine?.stop()
             stopSelf()
@@ -84,8 +80,6 @@ class ScreenProjectionService : Service() {
     }
 
     override fun onDestroy() {
-        projection?.stop()
-        projection = null
         RtcEngineHolder.engine?.stop()
         super.onDestroy()
     }
