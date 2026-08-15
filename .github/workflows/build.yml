@@ -28,8 +28,16 @@ jobs:
       - name: Build release APK
         working-directory: android-app
         run: |
-          flutter build apk --release --split-per-abi 2>&1 | tee build.log
-          exit ${PIPESTATUS[0]}
+          flutter build apk --release --split-per-abi > build.log 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            echo "::group::Android build failed"
+            tail -n 60 build.log | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            echo "::endgroup::"
+          fi
+          exit $code
 
       - name: Upload build log on failure
         if: failure()
