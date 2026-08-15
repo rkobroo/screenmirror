@@ -103,16 +103,16 @@ jobs:
         working-directory: windows-app
         run: flutter build windows --release
 
-      - name: Collect EXE artifact
+      - name: Collect Windows release bundle
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item windows-app/build/windows/x64/runner/Release/mirrorlink_windows.exe dist/MirrorLink-Setup.exe
+          Compress-Archive -Path windows-app/build/windows/x64/runner/Release/* -DestinationPath dist/MirrorLink-Windows.zip
           Get-ChildItem dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-exe
-          path: dist/MirrorLink-Setup.exe
+          name: windows-bundle
+          path: dist/MirrorLink-Windows.zip
           if-no-files-found: error
 
   # ------------------------------------------------ GitHub Release (tags only)
@@ -134,7 +134,7 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -name "*.apk" -exec cp {} release/ \;
-          find artifacts -name "*.exe" -exec cp {} release/ \;
+          find artifacts -name "*.zip" -exec cp {} release/ \;
           ls -la release/
 
       - name: Create release
@@ -146,7 +146,7 @@ jobs:
 
             ## Download
             - **Android** — install the `arm64-v8a` APK on modern devices (or `armeabi-v7a` for older ones).
-            - **Windows** — run `MirrorLink-Setup.exe`.
+            - **Windows** — extract `MirrorLink-Windows.zip` and run `mirrorlink_windows.exe`.
 
             ## Features
             - Screen mirroring (WebRTC, low latency)
