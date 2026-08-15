@@ -23,7 +23,7 @@ class SettingsScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.only(bottom: 32),
             children: [
-              _SectionHeader('Streaming'),
+              const _SectionHeader('Streaming'),
               _RadioGroup<VideoQuality>(
                 title: 'Video quality',
                 icon: Icons.hd,
@@ -51,7 +51,7 @@ class SettingsScreen extends StatelessWidget {
                     settings.update(app.copyWith(autoQuality: v)),
               ),
               const Divider(),
-              _SectionHeader('Appearance'),
+              const _SectionHeader('Appearance'),
               _RadioGroup<ThemeSetting>(
                 title: 'Theme',
                 icon: Icons.brightness_6,
@@ -62,7 +62,7 @@ class SettingsScreen extends StatelessWidget {
                     settings.update(app.copyWith(themeMode: v!)),
               ),
               const Divider(),
-              _SectionHeader('Startup & privacy'),
+              const _SectionHeader('Startup & privacy'),
               SwitchListTile(
                 secondary: const Icon(Icons.radar),
                 title: const Text('Auto-discover on launch'),
@@ -180,18 +180,18 @@ class _RadioGroup<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: options
-          .map((option) => RadioListTile<T>(
-                value: option,
-                groupValue: value,
-                onChanged: onChanged,
-                secondary: option == options.first
-                    ? Icon(icon)
-                    : null,
-                title: Text(label(option)),
-              ))
-          .toList(),
+    return RadioGroup<T>(
+      groupValue: value,
+      onChanged: onChanged,
+      child: Column(
+        children: options
+            .map((option) => RadioListTile<T>(
+                  value: option,
+                  secondary: option == options.first ? Icon(icon) : null,
+                  title: Text(label(option)),
+                ))
+            .toList(),
+      ),
     );
   }
 }

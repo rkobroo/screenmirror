@@ -196,12 +196,12 @@ class _PairingScreenState extends State<PairingScreen> {
                       if (raw == null) return;
                       _handleQrPayload(raw);
                     },
-                    errorBuilder: (context, error, child) => Center(
+                    errorBuilder: (context, error, child) => const Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Icon(Icons.camera_alt_outlined, size: 40),
-                          const SizedBox(height: 8),
+                          Icon(Icons.camera_alt_outlined, size: 40),
+                          SizedBox(height: 8),
                           Text('Camera unavailable'),
                         ],
                       ),
