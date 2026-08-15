@@ -1,0 +1,477 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:math';
+import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+
+import '../models/device.dart';
+import 'settings_service.dart';
+import 'signaling_server.dart';
+
+enum HostState { idle, paired, negotiating, streaming, error }
+
+@immutable
+class Transfer {
+  const Transfer({
+    required this.id,
+    required this.name,
+    required this.size,
+    required this.direction, // 'to' = PC → phone, 'from' = phone → PC
+    this.received = 0,
+    this.done = false,
+    this.path = '',
+  });
+
+  final String id;
+  final String name;
+  final int size;
+  final String direction;
+  final int received;
+  final bool done;
+  final String path;
+
+  double get fraction => size <= 0 ? 0 : (received / size).clamp(0.0, 1.0);
+
+  Transfer copyWith({int? received, bool? done, String? path}) => Transfer(
+        id: id,
+        name: name,
+        size: size,
+        direction: direction,
+        received: received ?? this.received,
+        done: done ?? this.done,
+        path: path ?? this.path,
+      );
+}
+
+/// Owns the WebRTC session with the connected phone: negotiates the answer,
+/// feeds the incoming video track to the viewer renderer, and manages the
+/// `control` + `files` data channels.
+class SessionManager extends ChangeNotifier {
+  SessionManager({required this.settings});
+
+  final SettingsService settings;
+
+  HostState _state = HostState.idle;
+  DeviceSession? _device;
+  int _fps = 0;
+  int _bps = 0;
+  String _error = '';
+
+  final List<Transfer> _transfers = [];
+  final Random _random = Random.secure();
+
+  RTCPeerConnection? _pc;
+  RTCVideoRenderer _renderer = RTCVideoRenderer();
+  RTCDataChannel? _control;
+  RTCDataChannel? _files;
+  bool _rendererReady = false;
+
+  HostState get state => _state;
+  DeviceSession? get device => _device;
+  RTCVideoRenderer get renderer => _renderer;
+  int get fps => _fps;
+  int get bps => _bps;
+  String get error => _error;
+  List<Transfer> get transfers => List.unmodifiable(_transfers);
+  bool get isStreaming => _state == HostState.streaming;
+
+  // ---- inbound file bookkeeping (phone → PC) --------------------------------
+  final Map<String, _IncomingFile> _incoming = {};
+
+  SignalingServer? _server;
+
+  /// Wire up to a running [SignalingServer].
+  void attach(SignalingServer server) {
+    _server = server;
+    server.onOffer = _onOffer;
+    server.onIce = _onIce;
+    server.onSessionOpen = _onSessionOpen;
+    server.onSessionClose = _onSessionClose;
+  }
+
+  // ---- signaling -------------------------------------------------------------
+
+  Future<void> _onOffer(String session, String sdp) async {
+    try {
+      await _ensurePeer();
+      final pc = _pc!;
+      _setState(HostState.negotiating);
+
+      await pc.setRemoteDescription(RTCSessionDescription('offer', sdp));
+      final answer = await pc.createAnswer({'offerToReceiveVideo': true});
+      await pc.setLocalDescription(answer);
+      _sendToPhone(session, {'t': 'answer', 'sdp': answer.sdp ?? ''});
+    } catch (e) {
+      _fail('Negotiation failed: $e');
+    }
+  }
+
+  void _onIce(String session, Map<String, dynamic> cand) {
+    _pc?.addCandidate(RTCIceCandidate(
+      cand['candidate'] as String? ?? '',
+      cand['sdpMid'] as String?,
+      (cand['sdpMLineIndex'] as num?)?.toInt(),
+    ));
+  }
+
+  void _onSessionOpen(String session, String ip) {
+    _device = DeviceSession(
+      id: session,
+      name: 'Android phone',
+      ip: ip,
+      connectedAt: DateTime.now(),
+      status: DeviceStatus.paired,
+    );
+    _setState(HostState.paired);
+  }
+
+  void _onSessionClose(String session) {
+    if (_device?.id == session) {
+      _recordHistory();
+      _device = null;
+      _setState(HostState.idle);
+    }
+  }
+
+  Future<void> _ensurePeer() async {
+    if (_pc != null) return;
+
+    if (!_rendererReady) {
+      await _renderer.initialize();
+      _rendererReady = true;
+    }
+
+    final pc = await createPeerConnection({
+      'iceServers': [],
+    });
+
+    pc.onDataChannel = (channel) => _onDataChannel(channel);
+    pc.onTrack = (event) => _onTrack(event);
+    pc.onIceCandidate = (candidate) {
+      final session = _device?.id;
+      if (session != null) {
+        _sendToPhone(session, {
+          't': 'ice',
+          'cand': {
+            'candidate': candidate.candidate,
+            'sdpMid': candidate.sdpMid,
+            'sdpMLineIndex': candidate.sdpMLineIndex,
+          },
+        });
+      }
+    };
+    pc.onIceState = (state) {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
+        _device?.status = DeviceStatus.streaming;
+        _setState(HostState.streaming);
+      } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+          state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+        _device?.status = DeviceStatus.disconnected;
+        _setState(HostState.idle);
+      }
+    };
+
+    _pc = pc;
+  }
+
+  void _onDataChannel(RTCDataChannel channel) {
+    channel.onMessage = (message) {
+      if (channel.label == 'control') {
+        _onControlMessage(message);
+      } else if (channel.label == 'files') {
+        if (message.isBinary) {
+          _onFileChunk(message.binary);
+        }
+      }
+    };
+    if (channel.label == 'control') {
+      _control = channel;
+    } else if (channel.label == 'files') {
+      _files = channel;
+    }
+  }
+
+  void _onTrack(RTCTrackEvent event) {
+    if (event.track.kind != 'video') return;
+    if (event.streams.isNotEmpty) {
+      _renderer.srcObject = event.streams.first;
+    } else {
+      createLocalMediaStream('phone-screen').then((stream) {
+        stream.addTrack(event.track);
+        _renderer.srcObject = stream;
+      });
+    }
+    _device?.status = DeviceStatus.streaming;
+    _setState(HostState.streaming);
+  }
+
+  void _onControlMessage(RTCDataChannelMessage message) {
+    if (message.isBinary) return;
+    final Map<String, dynamic> json;
+    try {
+      json = jsonDecode(message.text) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
+
+    switch (json['type']) {
+      case 'clipboard':
+        _applyIncomingClipboard(json['text'] as String? ?? '');
+      case 'ping':
+        _sendControl({'type': 'pong'});
+      case 'stats':
+        _fps = (json['fps'] as num?)?.toInt() ?? _fps;
+        _bps = (json['bps'] as num?)?.toInt() ?? _bps;
+        notifyListeners();
+      case 'file':
+        _onFileControl(json);
+      case 'pong':
+        break;
+    }
+  }
+
+  // ---- clipboard (PC → phone) ------------------------------------------------
+
+  Future<void> _applyIncomingClipboard(String text) async {
+    if (text.isEmpty || !settings.app.notifications) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    onIncomingClipboard?.call(text);
+  }
+
+  /// Called by the clipboard watcher when the PC clipboard changes.
+  Future<void> sendClipboard(String text) async {
+    if (!isStreaming || text.isEmpty) return;
+    _sendControl({'type': 'clipboard', 'text': text});
+  }
+
+  /// Set when the phone pushes clipboard text to the PC (used to suppress the
+  /// PC→phone echo loop in the clipboard watcher).
+  void Function(String text)? onIncomingClipboard;
+
+  // ---- remote input (PC → phone) ---------------------------------------------
+
+  void sendTouch(double x, double y, int action) =>
+      _sendControl({'type': 'input', 'kind': 'touch', 'x': x, 'y': y, 'action': action});
+
+  void sendSwipe(List<List<double>> points, int duration) =>
+      _sendControl({'type': 'input', 'kind': 'swipe', 'points': points, 'duration': duration});
+
+  void sendScroll(double dx, double dy) =>
+      _sendControl({'type': 'input', 'kind': 'scroll', 'dx': dx, 'dy': dy});
+
+  void sendKey(int code, int action) =>
+      _sendControl({'type': 'input', 'kind': 'key', 'code': code, 'action': action});
+
+  void sendText(String value) => _sendControl({'type': 'input', 'kind': 'text', 'value': value});
+
+  void sendSysButton(String button) =>
+      _sendControl({'type': 'input', 'kind': 'sys', 'button': button});
+
+  void sendVolume(String dir) =>
+      _sendControl({'type': 'input', 'kind': 'volume', 'dir': dir});
+
+  void sendMedia(String action) =>
+      _sendControl({'type': 'input', 'kind': 'media', 'action': action});
+
+  // ---- file transfer (PC → phone) ---------------------------------------------
+
+  /// Stream a local file to the phone.
+  Future<void> sendFileToPhone(String path) async {
+    final channel = _files;
+    if (channel == null) return;
+
+    final id = _newId();
+    final file = File(path);
+    final size = await file.length();
+    final name = file.uri.pathSegments.last;
+
+    _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'to'));
+
+    _sendControl({
+      'type': 'file',
+      'op': 'send',
+      'id': id,
+      'name': name,
+      'size': size,
+      'mime': 'application/octet-stream',
+    });
+
+    final header = ByteData(24);
+    final idBytes = Uint8List.fromList(utf8.encode(id).take(16).toList());
+    header.buffer.asUint8List().setRange(0, idBytes.length, idBytes);
+
+    final stream = file.openRead();
+    var offset = 0;
+    await for (final chunk in stream) {
+      final frame = ByteData(24 + chunk.length);
+      frame.buffer.asUint8List().setAll(0, header.buffer.asUint8List());
+      frame.buffer.asUint8List().setRange(24, 24 + chunk.length, chunk);
+      frame.setUint64(16, offset);
+      channel.send(RTCDataChannelMessage.fromBinary(
+        frame.buffer.asUint8List(),
+      ));
+      offset += chunk.length;
+      _updateTransfer(id, received: offset);
+    }
+
+    _sendControl({'type': 'file', 'op': 'done', 'id': id});
+    _updateTransfer(id, done: true);
+  }
+
+  // ---- inbound file transfer (phone → PC) --------------------------------------
+
+  void _onFileControl(Map<String, dynamic> json) {
+    final id = json['id'] as String? ?? '';
+    switch (json['op']) {
+      case 'send':
+        final name = json['name'] as String? ?? 'file';
+        final size = (json['size'] as num?)?.toInt() ?? 0;
+        _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'from'));
+      case 'done':
+        final file = _incoming.remove(id);
+        if (file != null) {
+          file.sink.close();
+          _updateTransfer(id, done: true, path: file.path);
+        }
+      case 'error':
+        _incoming.remove(id)?.sink.close();
+    }
+  }
+
+  void _onFileChunk(Uint8List frame) {
+    if (frame.length < 24) return;
+    final header = frame.sublist(0, 24);
+    final id = String.fromCharCodes(header.takeWhile((b) => b != 0));
+    final data = ByteData.sublistView(Uint8List.fromList(frame));
+    final offset = data.getUint64(16);
+    final payload = frame.sublist(24);
+
+    final file = _incoming.putIfAbsent(id, () => _openIncoming(id));
+    if (file == null) return;
+    file.sink.add(payload);
+    _updateTransfer(id, received: offset + payload.length);
+  }
+
+  _IncomingFile? _openIncoming(String id) {
+    try {
+      final dir = _saveDirectory();
+      final name = _transfers.firstWhere(
+        (t) => t.id == id,
+        orElse: () => Transfer(id: id, name: 'file', size: 0, direction: 'from'),
+      ).name;
+      final path = _uniquePath(dir, name);
+      final sink = File(path).openWrite();
+      return _IncomingFile(path, sink);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Directory _saveDirectory() {
+    final configured = settings.app.saveDirectory;
+    if (configured.isNotEmpty) {
+      return Directory(configured)..createSync(recursive: true);
+    }
+    final home = Platform.environment['USERPROFILE'] ??
+        Platform.environment['HOME'] ??
+        '.';
+    return Directory('$home\\Documents\\MirrorLink')..createSync(recursive: true);
+  }
+
+  String _uniquePath(Directory dir, String name) {
+    var candidate = File('${dir.path}\\$name');
+    if (!candidate.existsSync()) return candidate.path;
+    final dot = name.lastIndexOf('.');
+    final base = dot > 0 ? name.substring(0, dot) : name;
+    final ext = dot > 0 ? name.substring(dot) : '';
+    for (var i = 1; ; i++) {
+      candidate = File('${dir.path}\\$base ($i)$ext');
+      if (!candidate.existsSync()) return candidate.path;
+    }
+  }
+
+  // ---- misc --------------------------------------------------------------------
+
+  void _updateTransfer(String id, {int? received, bool? done, String? path}) {
+    final index = _transfers.indexWhere((t) => t.id == id);
+    if (index < 0) return;
+    _transfers[index] = _transfers[index].copyWith(
+      received: received,
+      done: done,
+      path: path,
+    );
+    notifyListeners();
+  }
+
+  void _sendControl(Map<String, dynamic> json) {
+    _control?.send(RTCDataChannelMessage(jsonEncode(json)));
+  }
+
+  void _sendToPhone(String session, Map<String, dynamic> json) {
+    _server?.sendJson(session, json);
+  }
+
+  void _setState(HostState next) {
+    if (_state != next) {
+      _state = next;
+      notifyListeners();
+    }
+  }
+
+  void _fail(String message) {
+    _error = message;
+    _setState(HostState.error);
+  }
+
+  void _recordHistory() {
+    final device = _device;
+    if (device == null) return;
+    final duration = DateTime.now().difference(device.connectedAt);
+    if (duration.inSeconds > 0) {
+      settings.addHistory(ConnectionRecord(
+        name: device.nickname.isNotEmpty ? device.nickname : device.name,
+        ip: device.ip,
+        connectedAt: device.connectedAt,
+        duration: duration,
+      ));
+    }
+  }
+
+  String _newId() => _random.nextDouble().toRadixString(16).replaceAll('.', '');
+
+  Future<void> close() async {
+    _recordHistory();
+    _incoming.forEach((_, f) => f.sink.close());
+    _incoming.clear();
+    _control = null;
+    _files = null;
+    try {
+      await _pc?.close();
+    } catch (_) {}
+    _pc = null;
+    if (_rendererReady) {
+      _renderer.dispose();
+      _rendererReady = false;
+    }
+    _device = null;
+    _fps = 0;
+    _bps = 0;
+    _setState(HostState.idle);
+  }
+
+  @override
+  void dispose() {
+    close();
+    super.dispose();
+  }
+}
+
+class _IncomingFile {
+  _IncomingFile(this.path, this.sink);
+  final String path;
+  final IOSink sink;
+}

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- SEO -->
+  <title>MirrorLink — Control Your Android Phone From Your PC</title>
+  <meta name="description" content="Mirror your Android screen to your Windows PC, control it with mouse and keyboard, transfer files, and sync the clipboard. Wireless, secure, and free — no accounts, no cloud servers." />
+  <meta name="keywords" content="Android screen mirroring, remote control Android, mirror phone to PC, Android to Windows, file transfer, clipboard sync, scrcpy alternative" />
+  <link rel="canonical" href="https://mirrorlink.app/" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="MirrorLink — Control Your Android Phone From Your PC" />
+  <meta property="og:description" content="Mirror your screen, transfer files, and control your device wirelessly. Free, secure, no accounts." />
+  <meta property="og:url" content="https://mirrorlink.app/" />
+  <meta property="og:image" content="/icons/icon-512.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#4F46E5" />
+
+  <link rel="icon" type="image/png" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+
+  <link rel="stylesheet" href="/css/style.css" />
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "MirrorLink",
+    "operatingSystem": "Windows 10+, Android 10+",
+    "applicationCategory": "UtilityApplication",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+    "description": "Wirelessly view and control your Android phone from a Windows PC: screen mirroring, remote control, file transfer, and clipboard sync. No accounts, no cloud servers."
+  }
+  </script>
+</head>
+<body>
+  <header class="nav">
+    <div class="container nav-inner">
+      <a class="brand" href="/" aria-label="MirrorLink home">
+        <span class="brand-mark">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="2"/>
+            <circle cx="16" cy="16" r="3" fill="none" stroke="currentColor" stroke-width="2"/>
+            <path d="M11 11 L13 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </span>
+        MirrorLink
+      </a>
+      <nav class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#screenshots">Screenshots</a>
+        <a href="#faq">FAQ</a>
+        <a href="#download" class="btn btn-small btn-primary">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="container hero-inner">
+      <div class="hero-copy">
+        <h1>Control Your Android Phone From Your PC</h1>
+        <p class="sub">Mirror your screen, transfer files, and control your device wirelessly.</p>
+        <div class="hero-actions">
+          <a href="#download" class="btn btn-primary btn-lg">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 3v10.6l3.3-3.3 1.4 1.4-5 5-5-5 1.4-1.4 3.3 3.3V3h2zM4 19h16v2H4z"/></svg>
+            Download Android
+          </a>
+          <a href="#download" class="btn btn-secondary btn-lg">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm3 9h8v1H8v-1zM8 9h8v1H8V9z"/></svg>
+            Download Windows
+          </a>
+        </div>
+        <p class="hero-meta">Free · Open source · No accounts · Works on your Wi-Fi only</p>
+      </div>
+      <div class="hero-visual" aria-hidden="true">
+        <div class="mock-pc">
+          <div class="mock-pc-bar"><span></span><span></span><span></span></div>
+          <div class="mock-pc-screen">
+            <div class="mock-phone-in-screen">
+              <div class="mock-phone-notch"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section class="section" id="features">
+    <div class="container">
+      <h2 class="section-title">Everything you need</h2>
+      <p class="section-sub">A wireless bridge between your phone and your PC — built around your privacy.</p>
+      <div class="features-grid">
+        <article class="card">
+          <div class="card-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+          <h3>Screen Mirroring</h3>
+          <p>Real-time, low-latency streaming with automatic quality adjustment for any Wi-Fi speed.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l-4 4 4 4M15 5l4 4-4 4"/></svg></div>
+          <h3>Remote Control</h3>
+          <p>Mouse clicks become taps, drags become swipes. Type with your keyboard, press back, home and recents.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg></div>
+          <h3>File Transfer</h3>
+          <p>Drag files from your PC to your phone and back again, with live progress.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg></div>
+          <h3>Clipboard Sync</h3>
+          <p>Copy on one device, paste on the other. In both directions.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+          <h3>Secure Connection</h3>
+          <p>One-time pairing codes and WebRTC DTLS-SRTP encryption. Data never leaves your network.</p>
+        </article>
+        <article class="card">
+          <div class="card-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 9h10M7 13h6"/><circle cx="12" cy="12" r="9"/></svg></div>
+          <h3>No Accounts. No Ads.</h3>
+          <p>No tracking, no ads, no sign-ups. It just works on your own Wi-Fi.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="section section-alt" id="how">
+    <div class="container">
+      <h2 class="section-title">How it works</h2>
+      <p class="section-sub">Four steps, two minutes, one network.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>Install the Android App</h3>
+          <p>Download the APK and open it on your phone.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>Install the Windows App</h3>
+          <p>Run the installer on your PC.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>Connect Both to Same Wi-Fi</h3>
+          <p>MirrorLink finds your PC automatically on the local network.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <h3>Pair and Start Controlling</h3>
+          <p>Enter the 6-digit code shown on your PC — and go.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREENSHOTS -->
+  <section class="section" id="screenshots">
+    <div class="container">
+      <h2 class="section-title">Screenshots</h2>
+      <p class="section-sub">A quick look at the phone and desktop apps.</p>
+      <div class="shots">
+        <figure class="shot">
+          <div class="shot-frame phone">
+            <div class="shot-inner phone-home"></div>
+          </div>
+          <figcaption>Android — home &amp; pairing</figcaption>
+        </figure>
+        <figure class="shot">
+          <div class="shot-frame phone">
+            <div class="shot-inner phone-pair"></div>
+          </div>
+          <figcaption>Android — discover + QR pairing</figcaption>
+        </figure>
+        <figure class="shot">
+          <div class="shot-frame desktop">
+            <div class="shot-inner desktop-dashboard"></div>
+          </div>
+          <figcaption>Windows — dashboard with pairing code</figcaption>
+        </figure>
+        <figure class="shot">
+          <div class="shot-frame desktop">
+            <div class="shot-inner desktop-viewer"></div>
+          </div>
+          <figcaption>Windows — live remote viewer</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="section section-alt" id="faq">
+    <div class="container narrow">
+      <h2 class="section-title">FAQ</h2>
+      <div class="faq">
+        <details>
+          <summary>Is it free?</summary>
+          <p>Yes. MirrorLink is free and open source (MIT). There are no paid tiers, no subscription, and no ads.</p>
+        </details>
+        <details>
+          <summary>Does it require internet?</summary>
+          <p>No. Everything runs between your phone and PC over your local Wi-Fi. Internet access is only needed to download the apps in the first place.</p>
+        </details>
+        <details>
+          <summary>Is my data secure?</summary>
+          <p>Yes. Connections are encrypted with WebRTC DTLS-SRTP, pairing uses one-time codes, and your screen data never leaves your own network.</p>
+        </details>
+        <details>
+          <summary>Which Android versions are supported?</summary>
+          <p>Android 10 and newer (API 24+). The Windows app requires Windows 10 or 11.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- DOWNLOAD -->
+  <section class="section download" id="download">
+    <div class="container">
+      <h2 class="section-title">Download</h2>
+      <p class="section-sub">Latest release <span id="version-tag" class="version-tag">loading…</span></p>
+
+      <div class="download-grid">
+        <div class="card download-card">
+          <div class="card-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M10 18h4" stroke="#fff" stroke-width="1.5"/></svg></div>
+          <h3>Android App</h3>
+          <p>APK for Android 10+</p>
+          <a id="dl-android" href="#" class="btn btn-primary">Download APK</a>
+        </div>
+        <div class="card download-card">
+          <div class="card-icon"><svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M3 3h18v18H3V3zm2 2v14h14V5H5zm3 9h8v1H8v-1zM8 9h8v1H8V9z"/></svg></div>
+          <h3>Windows App</h3>
+          <p>Installer for Windows 10+</p>
+          <a id="dl-windows" href="#" class="btn btn-secondary">Download EXE</a>
+        </div>
+      </div>
+
+      <div class="release-notes card" id="release-notes">
+        <h3 id="release-title">Release notes</h3>
+        <pre id="release-body">Loading the latest release…</pre>
+      </div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <div>
+        <div class="brand"><span class="brand-mark"><svg viewBox="0 0 24 24" width="18" height="18"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="16" cy="16" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M11 11 L13 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span> MirrorLink</div>
+        <p class="muted">Wireless phone control. No cloud, no tracking.</p>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/rkobroo/screenmirror">GitHub</a>
+        <a href="https://github.com/rkobroo/screenmirror/releases">Releases</a>
+        <a href="https://github.com/rkobroo/screenmirror/blob/main/docs/SECURITY.md">Security</a>
+      </div>
+    </div>
+    <div class="container footer-bottom">
+      <span class="muted">© 2026 MirrorLink · MIT License</span>
+      <span class="muted">Made with ❤️ — no, actually, made with Flutter &amp; WebRTC</span>
+    </div>
+  </footer>
+
+  <script src="/js/main.js" defer></script>
+</body>
+</html>

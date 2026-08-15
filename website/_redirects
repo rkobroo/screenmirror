@@ -1,0 +1,3 @@
+# Cloudflare Pages redirects
+/docs  https://github.com/mirrorlink-app/mirrorlink/blob/main/docs/README.md  302
+/releases  https://github.com/mirrorlink-app/mirrorlink/releases  302

@@ -1,0 +1,36 @@
+# ---- Flutter / Dart ----
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+**/*.g.dart
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# ---- Android ----
+android-app/android/.gradle/
+android-app/android/local.properties
+android-app/android/**/GeneratedPluginRegistrant.java
+android-app/android/app/.cxx/
+*.iml
+*.apk
+*.aab
+
+# ---- Windows (generated runner kept out of VCS; see docs/BUILD.md) ----
+windows-app/windows/
+
+# ---- Node / website ----
+node_modules/
+website/.wrangler/
+website/dist/
+*.log
+
+# ---- IDE ----
+.idea/
+.vscode/
+*.swp
+
+# ---- OS ----
+Thumbs.db
+.DS_Store
