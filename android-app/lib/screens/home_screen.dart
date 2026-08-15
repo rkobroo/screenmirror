@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide ConnectionState;
 
 import '../app_services.dart';
 import '../services/connection_controller.dart';

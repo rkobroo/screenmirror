@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -65,8 +64,7 @@ class SessionManager extends ChangeNotifier {
   final Random _random = Random.secure();
 
   RTCPeerConnection? _pc;
-  RTCVideoRenderer _renderer = RTCVideoRenderer();
-  RTCDataChannel? _control;
+  final RTCVideoRenderer _renderer = RTCVideoRenderer();  RTCDataChannel? _control;
   RTCDataChannel? _files;
   bool _rendererReady = false;
 
@@ -164,7 +162,7 @@ class SessionManager extends ChangeNotifier {
         });
       }
     };
-    pc.onIceState = (state) {
+    pc.onIceConnectionState = (state) {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
         _device?.status = DeviceStatus.streaming;
         _setState(HostState.streaming);
@@ -350,8 +348,9 @@ class SessionManager extends ChangeNotifier {
     final offset = data.getUint64(16);
     final payload = frame.sublist(24);
 
-    final file = _incoming.putIfAbsent(id, () => _openIncoming(id));
+    final file = _incoming[id] ?? _openIncoming(id);
     if (file == null) return;
+    _incoming[id] = file;
     file.sink.add(payload);
     _updateTransfer(id, received: offset + payload.length);
   }
@@ -441,7 +440,7 @@ class SessionManager extends ChangeNotifier {
     }
   }
 
-  String _newId() => _random.nextDouble().toRadixString(16).replaceAll('.', '');
+  String _newId() => _random.nextInt(0x7FFFFFFF).toRadixString(16);
 
   Future<void> close() async {
     _recordHistory();

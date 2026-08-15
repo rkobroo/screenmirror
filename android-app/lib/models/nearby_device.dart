@@ -5,7 +5,7 @@ class NearbyDevice {
     required this.ip,
     required this.port,
     this.accepting = true,
-    this.lastSeen = const Duration.zero,
+    this.lastSeen = const Duration(),
   });
 
   final String name;

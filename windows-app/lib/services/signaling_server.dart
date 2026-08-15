@@ -22,6 +22,7 @@ class SignalingServer {
 
   final Map<String, WebSocket> _sessionSockets = {};
   final Map<WebSocket, String> _socketSessions = {};
+  final Map<WebSocket, String> _socketIps = {};
   final Random _random = Random.secure();
 
   // ---- callbacks -----------------------------------------------------------
@@ -83,6 +84,7 @@ class SignalingServer {
       return;
     }
     final socket = await WebSocketTransformer.upgrade(request);
+    _socketIps[socket] = request.connectionInfo?.remoteAddress.address ?? '';
     socket.listen(
       (data) => _onMessage(socket, data),
       onDone: () => _cleanup(socket),
@@ -134,7 +136,7 @@ class SignalingServer {
       _sessionSockets[session] = socket;
       _socketSessions[socket] = session;
       socket.add(jsonEncode({'t': 'paired', 'session': session}));
-      onSessionOpen?.call(session, socket.address.address);
+      onSessionOpen?.call(session, _socketIps[socket] ?? '');
     } else {
       socket.add(jsonEncode({'t': 'pairfail', 'reason': 'code'}));
     }
@@ -151,6 +153,7 @@ class SignalingServer {
   }
 
   void _cleanup(WebSocket socket) {
+    _socketIps.remove(socket);
     final session = _socketSessions.remove(socket);
     if (session != null) {
       _sessionSockets.remove(session);

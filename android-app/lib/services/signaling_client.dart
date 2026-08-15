@@ -41,11 +41,11 @@ class SignalingClient {
     channel.stream.listen(
       _onMessage,
       onError: (Object error) {
-        _emit(SignalEvent.error, 'error': '$error');
+        _emit(SignalEvent.error, {'error': '$error'});
         _cleanup();
       },
       onDone: () {
-        if (!_manualClose) _emit(SignalEvent.closed, 'reason': 'done');
+        if (!_manualClose) _emit(SignalEvent.closed, {'reason': 'done'});
         _cleanup();
       },
     );
@@ -73,13 +73,13 @@ class SignalingClient {
         _session = (msg['session'] as String?) ?? '';
         _emit(SignalEvent.paired);
       case 'pairfail':
-        _emit(SignalEvent.pairFailed, 'reason': msg['reason']);
+        _emit(SignalEvent.pairFailed, {'reason': msg['reason']});
       case 'offer':
-        _emit(SignalEvent.offer, 'sdp': msg['sdp']);
+        _emit(SignalEvent.offer, {'sdp': msg['sdp']});
       case 'answer':
-        _emit(SignalEvent.answer, 'sdp': msg['sdp']);
+        _emit(SignalEvent.answer, {'sdp': msg['sdp']});
       case 'ice':
-        _emit(SignalEvent.ice, 'cand': msg['cand']);
+        _emit(SignalEvent.ice, {'cand': msg['cand']});
       case 'pong':
         _emit(SignalEvent.pong);
     }

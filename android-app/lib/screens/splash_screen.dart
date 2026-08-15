@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
-import '../app_services.dart';
 import '../services/device_bridge.dart';
+import 'home_screen.dart';
 
 /// Branded splash screen. Loads device info (name / Android version) so the
 /// Home screen can show it without a loading gap.
@@ -38,7 +38,6 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final services = ServicesScope.of(context);
 
     return Scaffold(
       body: Center(

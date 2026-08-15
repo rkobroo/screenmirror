@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 
 import 'app_services.dart';
 import 'screens/dashboard_screen.dart';

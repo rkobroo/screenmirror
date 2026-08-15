@@ -35,15 +35,16 @@ class AppServices {
   AppServices({required this.settings})
       : signaling = SignalingServer(),
         discovery = DiscoveryBroadcaster(),
-        session = SessionManager(settings: settings),
-        clipboardSync = ClipboardSync(session),
-        releaseChecker = ReleaseChecker();
+        releaseChecker = ReleaseChecker() {
+    session = SessionManager(settings: settings);
+    clipboardSync = ClipboardSync(session);
+  }
 
   final SettingsService settings;
   final SignalingServer signaling;
   final DiscoveryBroadcaster discovery;
-  final SessionManager session;
-  final ClipboardSync clipboardSync;
+  late final SessionManager session;
+  late final ClipboardSync clipboardSync;
   final ReleaseChecker releaseChecker;
 
   String get pcName {

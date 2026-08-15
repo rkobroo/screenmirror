@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/gestures.dart' show PointerScrollEvent;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -106,7 +107,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   bool _onKey(KeyEvent event) {
     final services = _services;
     if (services == null || !services.session.isStreaming) return false;
-    if (event is! KeyDownEvent || event.repeat) return false;
+    if (event is! KeyDownEvent) return false;
 
     final session = services.session;
     final logical = event.logicalKey;
@@ -164,7 +165,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   int? _androidKeyCode(LogicalKeyboardKey key) {
-    const map = <LogicalKeyboardKey, int>{
+    final map = <LogicalKeyboardKey, int>{
       LogicalKeyboardKey.enter: 66,
       LogicalKeyboardKey.backspace: 67,
       LogicalKeyboardKey.tab: 61,
@@ -229,10 +230,19 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _recTimer = Timer.periodic(const Duration(milliseconds: 100), (_) async {
       final image = await _capture();
       if (image == null) return;
-      final data = await image.toByteData(format: ui.ImageByteFormat.jpeg, quality: 70);
+      final width = image.width, height = image.height;
+      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
       image.dispose();
       if (data == null) return;
-      _writer?.addJpeg(data.buffer.asUint8List());
+      final frame = img.Image.fromBytes(
+        width: width,
+        height: height,
+        bytes: data.buffer,
+        order: img.ChannelOrder.rgba,
+        numChannels: 4,
+      );
+      final jpeg = img.encodeJpg(frame, quality: 70);
+      _writer?.addJpeg(jpeg);
     });
 
     setState(() => _recording = true);
@@ -306,8 +316,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   onPointerMove: (e) => _onPointerMove(e, _viewSize(context)),
                   onPointerUp: (e) => _onPointerUp(e, _viewSize(context)),
                   onPointerCancel: (_) => _dragStart = null,
-                  onPointerScroll: (e) {
-                    if (session.isStreaming) {
+                  onPointerSignal: (e) {
+                    if (e is PointerScrollEvent && session.isStreaming) {
                       session.sendScroll(e.scrollDelta.dx, e.scrollDelta.dy);
                     }
                   },

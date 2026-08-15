@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -138,9 +137,9 @@ class ConnectionController extends ChangeNotifier {
     final s = settings.app;
     final maxHeight = s.quality.height;
     final bitrate = switch (s.quality) {
-      VideoQuality.low => 2_000_000,
-      VideoQuality.medium => 4_000_000,
-      VideoQuality.high => 8_000_000,
+      VideoQuality.low => 2000000,
+      VideoQuality.medium => 4000000,
+      VideoQuality.high => 8000000,
     };
     final width = (maxHeight * 16 / 9).round();
 

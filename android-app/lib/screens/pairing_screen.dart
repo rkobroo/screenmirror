@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../app_services.dart';
@@ -196,7 +196,7 @@ class _PairingScreenState extends State<PairingScreen> {
                       if (raw == null) return;
                       _handleQrPayload(raw);
                     },
-                    errorBuilder: (context, error) => Center(
+                    errorBuilder: (context, error, child) => Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [

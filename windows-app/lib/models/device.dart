@@ -1,6 +1,6 @@
 /// A device session: the connected phone plus its state.
 class DeviceSession {
-  const DeviceSession({
+  DeviceSession({
     required this.id,
     required this.name,
     required this.ip,

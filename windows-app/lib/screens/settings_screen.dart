@@ -2,7 +2,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../app_services.dart';
-import '../models/app_settings.dart';
 
 /// Desktop settings: language, notifications, updates, save location.
 class SettingsScreen extends StatelessWidget {

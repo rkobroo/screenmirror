@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../app_services.dart';
-import '../services/session_manager.dart';
 import '../models/device.dart';
 import 'settings_screen.dart';
 import 'viewer_screen.dart';
