@@ -117,7 +117,7 @@ class SessionManager extends ChangeNotifier {
 
   Future<void> _onOffer(String session, String sdp) async {
     _log('onOffer: session=$session sdpLen=${sdp.length}');
-    _log('onOffer sdp: ${sdp.replaceAll(RegExp(r'\r\n'), ' | ').substring(0, sdp.length > 400 ? 400 : sdp.length)}');
+    _log('onOffer sdp: ${sdp.replaceAll(RegExp(r'\r\n'), ' | ').replaceAll('\n', ' / ')}');
     try {
       await _negotiate(session, sdp)
           .timeout(const Duration(seconds: 30));
@@ -127,6 +127,41 @@ class SessionManager extends ChangeNotifier {
     }
   }
 
+  /// Try to parse the remote offer. Some libwebrtc builds reject `\n`-only
+  /// SDP or refuse `a=extmap-allow-mixed`; sanitize and retry so the real
+  /// parse error can't stall the session.
+  Future<void> _setRemoteOffer(RTCPeerConnection pc, String sdp) async {
+    Future<void> apply(String candidate) =>
+        pc.setRemoteDescription(RTCSessionDescription('offer', candidate));
+    try {
+      await apply(sdp);
+      _log('negotiate: setRemoteDescription ok (raw)');
+      return;
+    } catch (e) {
+      _log('negotiate: raw setRemoteDescription failed: $e');
+    }
+    // Candidate 1: strip extmap-allow-mixed (a pre-M66 libwebrtc parse killer).
+    final noMixed =
+        sdp.split('\n').where((l) => !l.trim().startsWith('a=extmap-allow-mixed')).join('\n');
+    try {
+      await apply(noMixed);
+      _log('negotiate: setRemoteDescription ok (extmap-allow-mixed stripped)');
+      return;
+    } catch (e) {
+      _log('negotiate: stripped setRemoteDescription failed: $e');
+    }
+    // Candidate 2: normalize line endings to CRLF and ensure trailing CRLF.
+    final crlf = noMixed.replaceAll(RegExp(r'\r?\n'), '\r\n').trimRight() + '\r\n';
+    try {
+      await apply(crlf);
+      _log('negotiate: setRemoteDescription ok (CRLF normalized)');
+      return;
+    } catch (e) {
+      _log('negotiate: CRLF setRemoteDescription failed: $e');
+    }
+    rethrow;
+  }
+
   Future<void> _negotiate(String session, String sdp) async {
     _log('negotiate: ensurePeer...');
     await _ensurePeer();
@@ -134,8 +169,7 @@ class SessionManager extends ChangeNotifier {
     _setState(HostState.negotiating);
 
     _log('negotiate: setRemoteDescription...');
-    await pc.setRemoteDescription(RTCSessionDescription('offer', sdp));
-    _log('negotiate: setRemoteDescription ok');
+    await _setRemoteOffer(pc, sdp);
 
     _log('negotiate: createAnswer...');
     final answer = await pc.createAnswer({'offerToReceiveVideo': true});
