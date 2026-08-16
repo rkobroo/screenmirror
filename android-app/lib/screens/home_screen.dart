@@ -32,6 +32,42 @@ class _HomeScreenState extends State<HomeScreen> {
     } catch (_) {}
   }
 
+  Future<void> _startMirroring(
+      BuildContext context, AppServices services) async {
+    final enabled = await services.bridge.isAccessibilityEnabled();
+    if (!enabled && context.mounted) {
+      final go = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: const Icon(Icons.accessibility_new, size: 40),
+          title: const Text('Enable remote control?'),
+          content: const Text(
+              'The accessibility service is needed so the PC can tap, '
+              'swipe, and type on your phone.\n\n'
+              'You can still mirror without it — remote control just '
+              'won\'t work until you enable it.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Skip'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Enable'),
+            ),
+          ],
+        ),
+      );
+      if (go == true) {
+        await services.bridge.openAccessibilitySettings();
+        await Future.delayed(const Duration(seconds: 2));
+      }
+    }
+    if (context.mounted) {
+      services.controller.startMirroring();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final services = ServicesScope.of(context);
@@ -68,10 +104,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 _ErrorBanner(message: controller.lastError),
                 const SizedBox(height: 16),
               ],
-              if (controller.state == ConnectionState.streaming) ...[
-                _AccessibilityBanner(services: services),
-                const SizedBox(height: 12),
-              ],
+              _AccessibilityBanner(services: services),
+              const SizedBox(height: 12),
               FilledButton.icon(
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(56),
@@ -88,7 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 onPressed: controller.state == ConnectionState.streaming
                     ? () => controller.disconnect()
-                    : () => controller.startMirroring(),
+                    : () => _startMirroring(context, services),
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(

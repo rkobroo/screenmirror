@@ -155,6 +155,20 @@ class RtcEngine(
         videoTrack.setEnabled(true)
         peer.addTrack(videoTrack, listOf(MediaStreamTrack.VIDEO_TRACK_KIND))
 
+        // Apply the requested bitrate to the video sender so the encoder
+        // doesn't fall back to its very low default (~200 kbps).
+        try {
+            peer.senders.firstOrNull { it.track?.kind() == "video" }?.let { sender ->
+                val params = sender.parameters
+                if (params.encodings.isNotEmpty()) {
+                    params.encodings[0].maxBitrate = config.bitrate / 1000  // kbps
+                    sender.parameters = params
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "Failed to set bitrate: $e")
+        }
+
         // Phone-owned data channels (docs/PROTOCOL.md §6).
         controlChannel = peer.createDataChannel(CONTROL, DataChannel.Init())
         filesChannel = peer.createDataChannel(FILES, DataChannel.Init())
@@ -212,8 +226,9 @@ class RtcEngine(
             .defaultDisplay.getRealMetrics(displayMetrics)
         val (w, h) = fitWithin(displayMetrics.widthPixels, displayMetrics.heightPixels)
 
+        val fps = lastConfig?.fps ?: 30
         surfaceTextureHelper.handler.post {
-            newCapturer.startCapture(w, h, 30)
+            newCapturer.startCapture(w, h, fps)
         }
         capturer = newCapturer
     }
