@@ -190,7 +190,11 @@ class SessionManager extends ChangeNotifier {
   }
 
   Future<void> _ensurePeer() async {
-    if (_pc != null) return;
+    if (_pc != null) {
+      _log('ensurePeer: tearing down stale peer from previous session');
+      try { await _pc?.close(); } catch (_) {}
+      _pc = null;
+    }
 
     if (!_rendererReady) {
       _log('ensurePeer: renderer.initialize()...');
