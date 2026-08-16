@@ -165,6 +165,14 @@ class ConnectionController extends ChangeNotifier {
       nickname: s.deviceNickname,
       clipboardSync: s.clipboardSync,
     );
+
+    // The Home button becomes "Stop Mirroring" the moment ICE connects, so
+    // the projection-permission dialog would otherwise be unreachable during
+    // the normal connect flow. Request it here so capture starts alongside
+    // the mirroring session (the user can still deny to decline video).
+    try {
+      await bridge.requestProjection();
+    } catch (_) {}
   }
 
   Future<void> _handleOffer(String sdp) async {
