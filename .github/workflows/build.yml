@@ -104,12 +104,15 @@ jobs:
         run: flutter build windows --release
 
       - name: Code-sign the EXE (if certificate configured)
-        if: ${{ secrets.CODE_SIGNING_CERT != '' }}
         env:
           CODE_SIGNING_CERT: ${{ secrets.CODE_SIGNING_CERT }}
           CODE_SIGNING_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
         shell: pwsh
         run: |
+          if (-not $env:CODE_SIGNING_CERT) {
+            Write-Host 'No CODE_SIGNING_CERT secret configured; skipping code signing.'
+            exit 0
+          }
           $exe = Get-ChildItem -Path windows-app/build/windows/x64/runner/Release/*.exe |
               Select-Object -First 1
           $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
