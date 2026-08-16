@@ -164,9 +164,6 @@ class SessionManager extends ChangeNotifier {
     };
     pc.onIceConnectionState = (state) {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
-        if (_device?.connectedAt == null) {
-          _device?.connectedAt = DateTime.now();
-        }
         _device?.status = DeviceStatus.streaming;
         _setState(HostState.streaming);
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
