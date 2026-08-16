@@ -152,6 +152,8 @@ class SessionManager extends ChangeNotifier {
     await pc.setLocalDescription(answer);
     _log('negotiate: setLocalDescription ok');
 
+    _log('answer sdp: ${answer.sdp?.replaceAll(RegExp(r'\r\n'), ' | ').replaceAll('\n', ' / ')}');
+
     _sendToPhone(session, {'t': 'answer', 'sdp': answer.sdp ?? ''});
     _log('negotiate: answer sent to $session');
   }
@@ -235,8 +237,10 @@ class SessionManager extends ChangeNotifier {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
         _device?.status = DeviceStatus.streaming;
         _setState(HostState.streaming);
+        _startStatsLogging();
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
           state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
+        _stopStatsLogging();
         _device?.status = DeviceStatus.disconnected;
         _setState(HostState.idle);
       }
@@ -265,15 +269,51 @@ class SessionManager extends ChangeNotifier {
   void _onTrack(RTCTrackEvent event) {
     if (event.track.kind != 'video') return;
     if (event.streams.isNotEmpty) {
+      _log('onTrack: set srcObject stream=${event.streams.first.id} ownerTag=${event.streams.first.ownerTag} track=${event.track.id}');
       _renderer.srcObject = event.streams.first;
     } else {
       createLocalMediaStream('phone-screen').then((stream) {
         stream.addTrack(event.track);
+        _log('onTrack: no streams, wrapped track in stream id=${stream.id}');
         _renderer.srcObject = stream;
       });
     }
     _device?.status = DeviceStatus.streaming;
     _setState(HostState.streaming);
+  }
+
+  // ---- PC-side receive stats -------------------------------------------------
+
+  Timer? _statsTimer;
+
+  void _startStatsLogging() {
+    _stopStatsLogging();
+    _statsTimer = Timer.periodic(
+        const Duration(seconds: 5), (_) => _logVideoStats());
+  }
+
+  void _stopStatsLogging() {
+    _statsTimer?.cancel();
+    _statsTimer = null;
+  }
+
+  Future<void> _logVideoStats() async {
+    final pc = _pc;
+    if (pc == null) return;
+    try {
+      final reports = await pc.getStats().timeout(const Duration(seconds: 3));
+      for (final report in reports) {
+        final v = report.values;
+        if (report.type == 'inbound-rtp') {
+          if (v['kind'] != 'video') continue;
+          _log('pcstats: bytes=${v['bytesReceived']} packets=${v['packetsReceived']} framesRcvd=${v['framesReceived']} framesDecoded=${v['framesDecoded']} framesDropped=${v['framesDropped']} keyDecoded=${v['keyFramesDecoded']} decoder=${v['decoderImplementation']} codec=${v['codecId']} jitter=${v['jitter']}');
+        } else if (report.type == 'codec') {
+          _log('pcstats: codec ${v['mimeType']} payload=${v['payloadType']}');
+        }
+      }
+    } catch (e) {
+      _log('pcstats: error $e');
+    }
   }
 
   void _onControlMessage(RTCDataChannelMessage message) {
@@ -522,6 +562,7 @@ class SessionManager extends ChangeNotifier {
 
   Future<void> close() async {
     _recordHistory();
+    _stopStatsLogging();
     _incoming.forEach((_, f) => f.sink.close());
     _incoming.clear();
     _control = null;
