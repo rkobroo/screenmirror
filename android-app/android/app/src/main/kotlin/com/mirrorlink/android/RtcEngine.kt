@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.media.projection.MediaProjection
 import android.os.Handler
 import android.os.Looper
 import android.util.DisplayMetrics
@@ -177,7 +178,31 @@ class RtcEngine(
             existing.dispose()
         }
 
-        val newCapturer = ScreenCapturerAndroid(resultData, null)
+        // Android 14+ requires a non-null MediaProjection callback, otherwise
+        // MediaProjection.registerCallback() throws IllegalArgumentException
+        // and the app crashes the moment capture starts. The callback also
+        // cleans up when the user stops the projection (status-bar chip etc.).
+        val projectionCallback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                mainHandler.post {
+                    val cap = capturer
+                    capturer = null
+                    if (cap != null) {
+                        try {
+                            cap.stopCapture()
+                        } catch (_: Throwable) {
+                        }
+                        try {
+                            cap.dispose()
+                        } catch (_: Throwable) {
+                        }
+                    }
+                    callback.onState(NativeStates.DISCONNECTED)
+                }
+            }
+        }
+
+        val newCapturer = ScreenCapturerAndroid(resultData, projectionCallback)
         newCapturer.initialize(surfaceTextureHelper, context, capturerObserver)
 
         val displayMetrics = DisplayMetrics()
