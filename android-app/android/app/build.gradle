@@ -50,6 +50,18 @@ android {
             signingConfig signingConfigs.debug
         }
     }
+
+    // Build a fat APK plus one per-CPU-architecture APK. Native libs (WebRTC +
+    // Flutter engine) dominate size, so splitting keeps the phone downloads
+    // small (~31 MB arm64 instead of a 92 MB universal APK).
+    splits {
+        abi {
+            enable true
+            reset()
+            include "armeabi-v7a", "arm64-v8a", "x86_64"
+            universalApk true
+        }
+    }
 }
 
 flutter {

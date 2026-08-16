@@ -145,7 +145,11 @@ jobs:
             Automated build of ${{ github.ref_name }}.
 
             ## Download
-            - **Android** — install the universal `app-release.apk` (works on arm64, armeabi-v7a, and x86_64 devices).
+            - **Android** — pick the APK for your phone:
+              - `app-arm64-v8a-release.apk` — most modern phones (smallest, ~31 MB)
+              - `app-armeabi-v7a-release.apk` — older 32-bit phones (~23 MB)
+              - `app-x86_64-release.apk` — emulators only
+              - `app-universal-release.apk` — all ABIs in one (largest, use if unsure)
             - **Windows** — extract `MirrorLink-Windows.zip` and run `mirrorlink_windows.exe`.
 
             ## Features
