@@ -169,7 +169,7 @@ jobs:
               - `app-arm64-v8a-release.apk` — most modern phones (smallest, ~31 MB)
               - `app-armeabi-v7a-release.apk` — older 32-bit phones (~23 MB)
               - `app-x86_64-release.apk` — emulators only
-              - `app-universal-release.apk` — all ABIs in one (largest, use if unsure)
+              - `app-release.apk` — all ABIs in one (largest, use if unsure)
             - **Windows** — extract `MirrorLink-Windows.zip` and run `mirrorlink_windows.exe`.
 
             ## Features
