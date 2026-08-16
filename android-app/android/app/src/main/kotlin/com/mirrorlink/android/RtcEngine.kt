@@ -27,9 +27,9 @@ import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoFrame
 import org.webrtc.VideoTrack
 import java.nio.ByteBuffer
-import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.ThreadLocalRandom
 
 /**
  * Owns the native WebRTC stack on the phone: the [PeerConnection], the screen
@@ -86,6 +86,7 @@ class RtcEngine(
     // ---- auto-quality state -------------------------------------------------
     private var lastFpsWindow = 0
     private var lowFpsStreak = 0
+    private var highFpsStreak = 0
     private var currentCaptureHeight = 0
 
     // ---- PC → phone file transfers -------------------------------------------
@@ -107,6 +108,7 @@ class RtcEngine(
         private const val CONTROL = "control"
         private const val FILES = "files"
         private const val CHUNK_SIZE = 64 * 1024
+        private const val MIN_CAPTURE_HEIGHT = 240
         private const val TAG = "MirrorLinkRtc"
 
         private var initialized = false
@@ -301,7 +303,10 @@ class RtcEngine(
     fun sendFile(contentUri: String) {
         if (!running) return
         val files = filesChannel ?: return
-        val id = UUID.randomUUID().toString()
+        // Short id that fits the 16-byte chunk header. A full UUID gets
+        // truncated in the header and never matches the control-message id,
+        // which breaks the PC's completion/bookkeeping (docs/PROTOCOL.md §6).
+        val id = Integer.toHexString(ThreadLocalRandom.current().nextInt(Int.MAX_VALUE))
         worker.execute {
             try {
                 val resolver = context.contentResolver
@@ -498,26 +503,40 @@ class RtcEngine(
         }
     }
 
-    /** Simple auto-quality: reduce capture height if FPS stays low. */
+    /** Simple auto-quality: adapt capture height to the device's real FPS. */
     private fun maybeAutoAdjust(fps: Int) {
         val config = lastConfig ?: return
         if (!config.autoQuality) return
+        val target = config.height
         if (fps < 15) {
             lowFpsStreak++
-            if (lowFpsStreak >= 3 && currentCaptureHeight > 320) {
-                currentCaptureHeight /= 2
+            if (lowFpsStreak >= 3 && currentCaptureHeight > MIN_CAPTURE_HEIGHT) {
+                currentCaptureHeight = maxOf(MIN_CAPTURE_HEIGHT, currentCaptureHeight / 2)
                 lowFpsStreak = 0
-                val displayMetrics = DisplayMetrics()
-                (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
-                    .defaultDisplay.getRealMetrics(displayMetrics)
-                val (w, h) = fitWithin(displayMetrics.widthPixels, displayMetrics.heightPixels)
-                val cap = capturer ?: return
-                surfaceTextureHelper.handler.post {
-                    cap.changeCaptureFormat(w, h, config.fps)
-                }
+                applyCaptureFormat()
+            }
+        } else if (fps >= 20) {
+            highFpsStreak++
+            if (highFpsStreak >= 10 && currentCaptureHeight < target) {
+                currentCaptureHeight = minOf(target, currentCaptureHeight * 2)
+                highFpsStreak = 0
+                applyCaptureFormat()
             }
         } else {
             lowFpsStreak = 0
+            highFpsStreak = 0
+        }
+    }
+
+    private fun applyCaptureFormat() {
+        val displayMetrics = DisplayMetrics()
+        (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+            .defaultDisplay.getRealMetrics(displayMetrics)
+        val (w, h) = fitWithin(displayMetrics.widthPixels, displayMetrics.heightPixels)
+        val cap = capturer ?: return
+        val fps = lastConfig?.fps ?: 30
+        surfaceTextureHelper.handler.post {
+            cap.changeCaptureFormat(w, h, fps)
         }
     }
 
