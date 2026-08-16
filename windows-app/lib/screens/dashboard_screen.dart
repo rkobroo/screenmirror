@@ -199,6 +199,31 @@ class _SessionCard extends StatelessWidget {
               Text('No phone connected. Pair using the code above.',
                   style: theme.textTheme.bodyMedium)
             else ...[
+              if (session.error.isNotEmpty) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.error_outline,
+                          color: theme.colorScheme.onErrorContainer),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          session.error,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onErrorContainer),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: CircleAvatar(

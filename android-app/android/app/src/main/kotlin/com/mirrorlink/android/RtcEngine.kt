@@ -299,7 +299,7 @@ class RtcEngine(
         }
     }
 
-    /** Stream a SAF content URI to the PC as a file transfer. */
+    /** Stream a SAF content URI (or file path) to the PC as a file transfer. */
     fun sendFile(contentUri: String) {
         if (!running) return
         val files = filesChannel ?: return
@@ -310,22 +310,47 @@ class RtcEngine(
         worker.execute {
             try {
                 val resolver = context.contentResolver
+                val uri = android.net.Uri.parse(contentUri)
                 var name = "file"
                 var size = 0L
-                resolver.query(
-                    android.net.Uri.parse(contentUri),
-                    arrayOf(
-                        android.provider.OpenableColumns.DISPLAY_NAME,
-                        android.provider.OpenableColumns.SIZE,
-                    ),
-                    null, null, null,
-                )?.use { cursor ->
-                    if (cursor.moveToFirst()) {
-                        val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                        val sizeIdx = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
-                        if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
-                        if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+                val input: java.io.InputStream? = if (uri.scheme == "content") {
+                    resolver.query(
+                        uri,
+                        arrayOf(
+                            android.provider.OpenableColumns.DISPLAY_NAME,
+                            android.provider.OpenableColumns.SIZE,
+                        ),
+                        null, null, null,
+                    )?.use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            val nameIdx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                            val sizeIdx = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                            if (nameIdx >= 0) name = cursor.getString(nameIdx) ?: name
+                            if (sizeIdx >= 0) size = cursor.getLong(sizeIdx)
+                        }
                     }
+                    resolver.openInputStream(uri)
+                } else {
+                    // file_picker hands back a cached filesystem path, not a
+                    // content:// URI — open it directly (contentResolver rejects
+                    // scheme-less paths with IllegalArgumentException).
+                    try {
+                        val f = java.io.File(contentUri)
+                        name = f.name
+                        size = f.length()
+                        java.io.FileInputStream(f)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                if (input == null) {
+                    sendControl(
+                        JSONObject()
+                            .put("type", "file").put("op", "error")
+                            .put("id", id).put("reason", "cannot open file")
+                            .toString(),
+                    )
+                    return@execute
                 }
 
                 sendControl(
@@ -339,7 +364,6 @@ class RtcEngine(
                         .toString(),
                 )
 
-                val input = resolver.openInputStream(android.net.Uri.parse(contentUri)) ?: return@execute
                 val header = ByteBuffer.allocate(24)
                 val idBytes = id.toByteArray(Charsets.UTF_8).copyOf(16)
                 val buffer = ByteArray(CHUNK_SIZE)
@@ -683,9 +707,16 @@ class RtcEngine(
             val tmp = w; w = h; h = tmp
         }
         val maxH = currentCaptureHeight
-        if (h <= maxH) return w to h
-        val scale = maxH.toDouble() / h
-        return ((w * scale).toInt()) to maxH
+        if (h > maxH) {
+            val scale = maxH.toDouble() / h
+            w = (w * scale).toInt()
+            h = maxH
+        }
+        // Round down to a multiple of 16: hardware encoders reject odd/unusual
+        // sizes and silently fall back to slow software encoding.
+        w = (w / 16) * 16
+        h = (h / 16) * 16
+        return maxOf(16, w) to maxOf(16, h)
     }
 }
 

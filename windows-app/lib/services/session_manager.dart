@@ -92,24 +92,65 @@ class SessionManager extends ChangeNotifier {
     server.onSessionClose = _onSessionClose;
   }
 
+  // ---- diagnostics ------------------------------------------------------------
+
+  /// Append a timestamped line to %APPDATA%\com.mirrorlink\mirrorlink_windows\session.log
+  /// so negotiation failures are visible even though the dashboard hides them.
+  void _log(String message) {
+    try {
+      final home = Platform.environment['APPDATA'] ??
+          Platform.environment['USERPROFILE'] ??
+          '.';
+      final dir = Directory('$home\\com.mirrorlink\\mirrorlink_windows');
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      File('${dir.path}\\session.log').writeAsStringSync(
+        '[${DateTime.now().toIso8601String()}] $message\n',
+        mode: FileMode.append,
+      );
+    } catch (_) {}
+    debugPrint('[MirrorLink] $message');
+  }
+
   // ---- signaling -------------------------------------------------------------
 
   Future<void> _onOffer(String session, String sdp) async {
+    _log('onOffer: session=$session sdpLen=${sdp.length}');
+    _log('onOffer sdp: ${sdp.replaceAll(RegExp(r'\r\n'), ' | ').substring(0, sdp.length > 400 ? 400 : sdp.length)}');
     try {
-      await _ensurePeer();
-      final pc = _pc!;
-      _setState(HostState.negotiating);
-
-      await pc.setRemoteDescription(RTCSessionDescription('offer', sdp));
-      final answer = await pc.createAnswer({'offerToReceiveVideo': true});
-      await pc.setLocalDescription(answer);
-      _sendToPhone(session, {'t': 'answer', 'sdp': answer.sdp ?? ''});
-    } catch (e) {
+      await _negotiate(session, sdp)
+          .timeout(const Duration(seconds: 30));
+    } catch (e, st) {
+      _log('onOffer FAILED: $e\n$st');
       _fail('Negotiation failed: $e');
     }
   }
 
+  Future<void> _negotiate(String session, String sdp) async {
+    _log('negotiate: ensurePeer...');
+    await _ensurePeer();
+    final pc = _pc!;
+    _setState(HostState.negotiating);
+
+    _log('negotiate: setRemoteDescription...');
+    await pc.setRemoteDescription(RTCSessionDescription('offer', sdp));
+    _log('negotiate: setRemoteDescription ok');
+
+    _log('negotiate: createAnswer...');
+    final answer = await pc.createAnswer({'offerToReceiveVideo': true});
+    _log('negotiate: createAnswer ok len=${answer.sdp?.length}');
+
+    _log('negotiate: setLocalDescription...');
+    await pc.setLocalDescription(answer);
+    _log('negotiate: setLocalDescription ok');
+
+    _sendToPhone(session, {'t': 'answer', 'sdp': answer.sdp ?? ''});
+    _log('negotiate: answer sent to $session');
+  }
+
   void _onIce(String session, Map<String, dynamic> cand) {
+    _log('onIce: session=$session cand=${(cand['candidate'] as String? ?? '').split(' ').take(8).join(' ')}');
     _pc?.addCandidate(RTCIceCandidate(
       cand['candidate'] as String? ?? '',
       cand['sdpMid'] as String?,
@@ -118,6 +159,7 @@ class SessionManager extends ChangeNotifier {
   }
 
   void _onSessionOpen(String session, String ip) {
+    _log('session open: $session ip=$ip');
     _device = DeviceSession(
       id: session,
       name: 'Android phone',
@@ -129,6 +171,7 @@ class SessionManager extends ChangeNotifier {
   }
 
   void _onSessionClose(String session) {
+    _log('session close: $session');
     if (_device?.id == session) {
       _recordHistory();
       _device = null;
@@ -140,16 +183,26 @@ class SessionManager extends ChangeNotifier {
     if (_pc != null) return;
 
     if (!_rendererReady) {
+      _log('ensurePeer: renderer.initialize()...');
       await _renderer.initialize();
       _rendererReady = true;
+      _log('ensurePeer: renderer ready');
     }
 
+    _log('ensurePeer: createPeerConnection()...');
     final pc = await createPeerConnection({
       'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}, {'urls': 'stun:stun1.l.google.com:19302'}],
     });
+    _log('ensurePeer: pc created');
 
-    pc.onDataChannel = (channel) => _onDataChannel(channel);
-    pc.onTrack = (event) => _onTrack(event);
+    pc.onDataChannel = (channel) {
+      _log('onDataChannel: label=${channel.label}');
+      _onDataChannel(channel);
+    };
+    pc.onTrack = (event) {
+      _log('onTrack: kind=${event.track.kind} streams=${event.streams.length}');
+      _onTrack(event);
+    };
     pc.onIceCandidate = (candidate) {
       final session = _device?.id;
       if (session != null) {
@@ -164,6 +217,7 @@ class SessionManager extends ChangeNotifier {
       }
     };
     pc.onIceConnectionState = (state) {
+      _log('iceConnectionState: $state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
         _device?.status = DeviceStatus.streaming;
         _setState(HostState.streaming);
@@ -431,6 +485,7 @@ class SessionManager extends ChangeNotifier {
   }
 
   void _fail(String message) {
+    _log('FAIL: $message');
     _error = message;
     _setState(HostState.error);
   }
