@@ -116,6 +116,7 @@ class SessionManager extends ChangeNotifier {
   // ---- signaling -------------------------------------------------------------
 
   Future<void> _onOffer(String session, String sdp) async {
+    _startHeartbeat();
     _log('onOffer: session=$session sdpLen=${sdp.length}');
     _log('onOffer sdp: ${sdp.replaceAll(RegExp(r'\r\n'), ' | ').replaceAll('\n', ' / ')}');
     try {
@@ -237,10 +238,10 @@ class SessionManager extends ChangeNotifier {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
         _device?.status = DeviceStatus.streaming;
         _setState(HostState.streaming);
-        _startStatsLogging();
+        _scheduleStatsFetches();
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
           state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
-        _stopStatsLogging();
+        _stopHeartbeat();
         _device?.status = DeviceStatus.disconnected;
         _setState(HostState.idle);
       }
@@ -282,37 +283,50 @@ class SessionManager extends ChangeNotifier {
     _setState(HostState.streaming);
   }
 
-  // ---- PC-side receive stats -------------------------------------------------
+  // ---- PC-side receive diagnostics -------------------------------------------
 
-  Timer? _statsTimer;
+  Timer? _hbTimer;
+  int _hb = 0;
 
-  void _startStatsLogging() {
-    _stopStatsLogging();
-    _statsTimer = Timer.periodic(
-        const Duration(seconds: 5), (_) => _logVideoStats());
+  void _startHeartbeat() {
+    _stopHeartbeat();
+    _hb = 0;
+    _hbTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _hb++;
+      _log('hb: $_hb');
+    });
   }
 
-  void _stopStatsLogging() {
-    _statsTimer?.cancel();
-    _statsTimer = null;
+  void _stopHeartbeat() {
+    _hbTimer?.cancel();
+    _hbTimer = null;
   }
 
-  Future<void> _logVideoStats() async {
+  void _scheduleStatsFetches() {
+    Timer(const Duration(seconds: 2), () => _fetchStats('t+2s'));
+    Timer(const Duration(seconds: 8), () => _fetchStats('t+8s'));
+  }
+
+  Future<void> _fetchStats(String label) async {
     final pc = _pc;
-    if (pc == null) return;
+    if (pc == null) {
+      _log('pcstats: $label pc-null');
+      return;
+    }
+    _log('pcstats: $label start');
     try {
       final reports = await pc.getStats().timeout(const Duration(seconds: 3));
-      for (final report in reports) {
-        final v = report.values;
-        if (report.type == 'inbound-rtp') {
-          if (v['kind'] != 'video') continue;
-          _log('pcstats: bytes=${v['bytesReceived']} packets=${v['packetsReceived']} framesRcvd=${v['framesReceived']} framesDecoded=${v['framesDecoded']} framesDropped=${v['framesDropped']} keyDecoded=${v['keyFramesDecoded']} decoder=${v['decoderImplementation']} codec=${v['codecId']} jitter=${v['jitter']}');
-        } else if (report.type == 'codec') {
-          _log('pcstats: codec ${v['mimeType']} payload=${v['payloadType']}');
+      final types = <String>{};
+      for (final r in reports) {
+        types.add(r.type);
+        if (r.type == 'inbound-rtp' && r.values['kind'] == 'video') {
+          final v = r.values;
+          _log('pcstats: $label video bytes=${v['bytesReceived']} packets=${v['packetsReceived']} framesRcvd=${v['framesReceived']} framesDecoded=${v['framesDecoded']} dropped=${v['framesDropped']} keyDecoded=${v['keyFramesDecoded']} decoder=${v['decoderImplementation']} codec=${v['codecId']} jitter=${v['jitter']}');
         }
       }
+      _log('pcstats: $label done reports=${reports.length} types=$types');
     } catch (e) {
-      _log('pcstats: error $e');
+      _log('pcstats: $label error $e');
     }
   }
 
@@ -333,6 +347,7 @@ class SessionManager extends ChangeNotifier {
         _sendControl({'type': 'pong'});
         break;
       case 'stats':
+        _log('phone stats: fps=${json['fps']} bps=${json['bps']}');
         _fps = (json['fps'] as num?)?.toInt() ?? _fps;
         _bps = (json['bps'] as num?)?.toInt() ?? _bps;
         notifyListeners();
@@ -562,7 +577,7 @@ class SessionManager extends ChangeNotifier {
 
   Future<void> close() async {
     _recordHistory();
-    _stopStatsLogging();
+    _stopHeartbeat();
     _incoming.forEach((_, f) => f.sink.close());
     _incoming.clear();
     _control = null;
