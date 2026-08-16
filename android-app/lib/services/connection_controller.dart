@@ -85,6 +85,14 @@ class ConnectionController extends ChangeNotifier {
     }
   }
 
+  /// Clear the device list and restart discovery (manual rescan).
+  Future<void> refreshDiscovery() async {
+    _devices.clear();
+    notifyListeners();
+    await stopDiscovery();
+    await startDiscovery();
+  }
+
   void _onDiscovered(NearbyDevice device) {
     final index = _devices.indexWhere((d) => d == device);
     if (index >= 0) {

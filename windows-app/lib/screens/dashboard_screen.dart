@@ -43,6 +43,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Text('MirrorLink'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh discovery & pairing code',
+            onPressed: () async {
+              await services.refreshDiscovery();
+              if (mounted) setState(() {});
+            },
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             tooltip: 'Settings',
             onPressed: () =>
@@ -58,8 +66,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               _PairingCard(
                 services: services,
-                onRefresh: () {
-                  services.signaling.regenerateCode();
+                onRefresh: () async {
+                  await services.refreshDiscovery();
                   setState(() {});
                 },
               ),

@@ -67,6 +67,16 @@ class AppServices {
     clipboardSync.start();
   }
 
+  /// Regenerate the pairing code and re-broadcast discovery beacons so phones
+  /// can find this PC again (manual refresh).
+  Future<void> refreshDiscovery() async {
+    signaling.regenerateCode();
+    await discovery.start(
+      deviceName: pcName,
+      signalingPort: 59661,
+    );
+  }
+
   Future<void> dispose() async {
     clipboardSync.stop();
     await discovery.stop();

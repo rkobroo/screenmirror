@@ -165,6 +165,12 @@ class _PairingScreenState extends State<PairingScreen> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Rescan for PCs',
+                    onPressed: () => controller.refreshDiscovery(),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
