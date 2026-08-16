@@ -103,6 +103,23 @@ jobs:
         working-directory: windows-app
         run: flutter build windows --release
 
+      - name: Code-sign the EXE (if certificate configured)
+        if: ${{ secrets.CODE_SIGNING_CERT != '' }}
+        env:
+          CODE_SIGNING_CERT: ${{ secrets.CODE_SIGNING_CERT }}
+          CODE_SIGNING_PASSWORD: ${{ secrets.CODE_SIGNING_PASSWORD }}
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path windows-app/build/windows/x64/runner/Release/*.exe |
+              Select-Object -First 1
+          $pfx = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CODE_SIGNING_CERT))
+          $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin' -Recurse `
+              -Filter signtool.exe | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw 'signtool.exe not found (install Windows SDK)' }
+          & $signtool.FullName sign /fd SHA256 /f $pfx /p $env:CODE_SIGNING_PASSWORD `
+              /tr http://timestamp.digicert.com /td SHA256 /v $exe.FullName
+
       - name: Collect Windows release bundle
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
