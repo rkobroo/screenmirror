@@ -25,7 +25,7 @@ class ReleaseInfo {
 /// Fetches release metadata from the GitHub Releases API so the desktop app
 /// can show an "update available" prompt and link to download assets.
 class ReleaseChecker {
-  ReleaseChecker({this.repo = 'mirrorlink-app/mirrorlink'});
+  ReleaseChecker({this.repo = 'rkobroo/screenmirror'});
 
   final String repo;
 

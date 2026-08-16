@@ -130,14 +130,19 @@ class ConnectionController extends ChangeNotifier {
     switch (event['type']) {
       case 'paired':
         _onPaired();
+        break;
       case 'pairFailed':
         _fail('Pairing rejected by the PC.');
+        break;
       case 'answer':
         bridge.setRemoteAnswer(event['sdp'] as String? ?? '');
+        break;
       case 'ice':
         _handleRemoteIce(event['cand'] as Map);
+        break;
       case 'closed':
         _fail('PC disconnected.');
+        break;
     }
   }
 
@@ -181,8 +186,10 @@ class ConnectionController extends ChangeNotifier {
     switch (event['type']) {
       case EventType.state:
         _onNativeState(event['value'] as String);
+        break;
       case EventType.offer:
         _handleOffer(event['sdp'] as String? ?? '');
+        break;
       case EventType.ice:
         signaling.sendJson({
           't': 'ice',
@@ -192,26 +199,37 @@ class ConnectionController extends ChangeNotifier {
             'sdpMLineIndex': event['sdpMLineIndex'],
           },
         });
+        break;
       case EventType.clipboard:
         _handlePhoneClipboard(event['text'] as String? ?? '');
+        break;
       case EventType.stats:
         _fps = (event['fps'] as num?)?.toInt() ?? 0;
         _bps = (event['bps'] as num?)?.toInt() ?? 0;
         _throttledNotify();
+        break;
     }
   }
 
   void _onNativeState(String value) {
     switch (value) {
+      case NativeState.ready:
+        // Native peer is up and the offer is ready; wait for negotiation.
+        _setState(ConnectionState.negotiating);
+        break;
       case NativeState.starting:
         _setState(ConnectionState.negotiating);
+        break;
       case NativeState.connected:
         _setState(ConnectionState.streaming);
+        break;
       case NativeState.disconnected:
         _setState(ConnectionState.disconnected);
+        break;
       case NativeState.permissionDenied:
         _lastError = 'Screen capture permission was denied.';
         _setState(ConnectionState.error);
+        break;
       default:
         _fail('Native error: $value');
     }

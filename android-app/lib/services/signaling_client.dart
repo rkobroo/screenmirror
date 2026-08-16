@@ -72,16 +72,22 @@ class SignalingClient {
       case 'paired':
         _session = (msg['session'] as String?) ?? '';
         _emit(SignalEvent.paired);
+        break;
       case 'pairfail':
         _emit(SignalEvent.pairFailed, {'reason': msg['reason']});
+        break;
       case 'offer':
         _emit(SignalEvent.offer, {'sdp': msg['sdp']});
+        break;
       case 'answer':
         _emit(SignalEvent.answer, {'sdp': msg['sdp']});
+        break;
       case 'ice':
         _emit(SignalEvent.ice, {'cand': msg['cand']});
+        break;
       case 'pong':
         _emit(SignalEvent.pong);
+        break;
     }
   }
 

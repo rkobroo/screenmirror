@@ -64,7 +64,8 @@ class SessionManager extends ChangeNotifier {
   final Random _random = Random.secure();
 
   RTCPeerConnection? _pc;
-  final RTCVideoRenderer _renderer = RTCVideoRenderer();  RTCDataChannel? _control;
+  final RTCVideoRenderer _renderer = RTCVideoRenderer();
+  RTCDataChannel? _control;
   RTCDataChannel? _files;
   bool _rendererReady = false;
 

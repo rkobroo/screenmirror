@@ -94,12 +94,12 @@ class InputAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun toPixels(normalized: Double): Pair<Int, Int> {
+    private fun toPixels(nx: Double, ny: Double): Pair<Int, Int> {
         val metrics = DisplayMetrics()
         (getSystemService(WINDOW_SERVICE) as WindowManager)
             .defaultDisplay.getRealMetrics(metrics)
-        val x = (normalizedX(normalized, metrics) * metrics.widthPixels).toInt()
-        val y = (normalizedY(normalized, metrics) * metrics.heightPixels).toInt()
+        val x = (normalizedX(nx, metrics) * metrics.widthPixels).toInt()
+        val y = (normalizedY(ny, metrics) * metrics.heightPixels).toInt()
         return x to y
     }
 
@@ -122,7 +122,7 @@ class InputAccessibilityService : AccessibilityService() {
     }
 
     private fun injectTouch(x: Float, y: Float, action: Int) {
-        val (px, py) = toPixels(x.toDouble())
+        val (px, py) = toPixels(x.toDouble(), y.toDouble())
 
         val path = Path()
         path.moveTo(px.toFloat(), py.toFloat())
@@ -142,11 +142,11 @@ class InputAccessibilityService : AccessibilityService() {
 
         val path = Path()
         val first = points.optJSONObject(0) ?: return
-        val (sx, sy) = toPixels(first.optDouble("x"))
+        val (sx, sy) = toPixels(first.optDouble("x"), first.optDouble("y"))
         path.moveTo(sx.toFloat(), sy.toFloat())
         for (i in 1 until points.length()) {
             val p = points.optJSONObject(i) ?: continue
-            val (x, y) = toPixels(p.optDouble("x"))
+            val (x, y) = toPixels(p.optDouble("x"), p.optDouble("y"))
             path.lineTo(x.toFloat(), y.toFloat())
         }
 

@@ -76,11 +76,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(56),
                 ),
-                icon: const Icon(Icons.screen_share),
-                label: const Text('Start Mirroring'),
+                icon: Icon(
+                  controller.state == ConnectionState.streaming
+                      ? Icons.stop
+                      : Icons.screen_share,
+                ),
+                label: Text(
+                  controller.state == ConnectionState.streaming
+                      ? 'Stop Mirroring'
+                      : 'Start Mirroring',
+                ),
                 onPressed: controller.state == ConnectionState.streaming
-                    ? () => controller.startMirroring()
-                    : null,
+                    ? () => controller.disconnect()
+                    : () => controller.startMirroring(),
               ),
               const SizedBox(height: 12),
               OutlinedButton.icon(

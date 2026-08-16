@@ -140,6 +140,7 @@ abstract class EventType {
 
 /// State values emitted as `state` events.
 abstract class NativeState {
+  static const ready = 'ready';
   static const starting = 'starting';
   static const connected = 'connected';
   static const disconnected = 'disconnected';

@@ -66,11 +66,13 @@ class FileTransferService extends ChangeNotifier {
         final received = (event['received'] as num?)?.toInt() ?? 0;
         final total = (event['total'] as num?)?.toInt() ?? 0;
         _upsert(id, received: received, total: total);
+        break;
       case EventType.fileDone:
         final id = event['id'] as String?;
         final name = event['name'] as String? ?? 'file';
         if (id == null) return;
         _upsert(id, done: true, name: name, total: 0);
+        break;
     }
   }
 
