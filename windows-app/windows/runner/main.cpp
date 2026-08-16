@@ -17,10 +17,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // plugins.
   ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
-  // Enable Impeller on Windows. On Flutter >= 3.44.9 the Impeller GL
-  // pixel-buffer external-texture path is fixed (flutter engine #183065 /
-  // #183561 / #181656). The Skia external-texture path is broken on these
-  // engines: v1.3.2 (3.47.0) crashed and v1.3.3 (3.44.9) rendered black.
+  // Impeller is the default renderer on Flutter 3.47.0 and its external
+  // pixel-buffer texture path is fixed there (engine #183065 / #183561 /
+  // #181656). Skia's external-texture path crashes/blacks on recent engines.
+  // Leaving the switch unset lets the engine use its default (Impeller on 3.47+).
   ::SetEnvironmentVariableA("FLUTTER_ENGINE_SWITCHES", "1");
   ::SetEnvironmentVariableA("FLUTTER_ENGINE_SWITCH_1", "enable-impeller=true");
 

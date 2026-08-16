@@ -191,6 +191,13 @@ class SessionManager extends ChangeNotifier {
 
     if (!_rendererReady) {
       _log('ensurePeer: renderer.initialize()...');
+      _renderer.onFirstFrameRendered = () {
+        _log('renderer: didFirstFrameRendered — frames ARE reaching the texture');
+      };
+      _renderer.onResize = () {
+        final v = _renderer.value;
+        _log('renderer: size=${v.width}x${v.height} renderVideo=${v.renderVideo}');
+      };
       await _renderer.initialize();
       _rendererReady = true;
       _log('ensurePeer: renderer ready');
