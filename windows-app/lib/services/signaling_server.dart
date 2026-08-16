@@ -104,10 +104,12 @@ class SignalingServer {
     switch (msg['t']) {
       case 'pair':
         _handlePair(socket, msg);
+        break;
       case 'offer':
         if (_authorized(socket, msg)) {
           onOffer?.call(_socketSessions[socket]!, msg['sdp'] as String? ?? '');
         }
+        break;
       case 'ice':
         if (_authorized(socket, msg)) {
           final cand = msg['cand'];
@@ -118,8 +120,10 @@ class SignalingServer {
             );
           }
         }
+        break;
       case 'ping':
         socket.add(jsonEncode({'t': 'pong'}));
+        break;
       case 'answer':
       case 'pong':
         // Phone is the offerer, so it never answers; pings are health-checks.

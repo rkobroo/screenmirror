@@ -106,6 +106,7 @@ class RtcEngine(
         private const val CONTROL = "control"
         private const val FILES = "files"
         private const val CHUNK_SIZE = 64 * 1024
+        private const val TAG = "MirrorLinkRtc"
 
         private var initialized = false
 
@@ -390,8 +391,12 @@ class RtcEngine(
     // ------------------------------------------------------------------ private
 
     private val pcObserver = object : PeerConnection.Observer {
-        override fun onSignalingChange(state: PeerConnection.SignalingState?) = Unit
+        override fun onSignalingChange(state: PeerConnection.SignalingState?) {
+            android.util.Log.i(TAG, "signaling state: $state")
+        }
+
         override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+            android.util.Log.i(TAG, "ice connection state: $state")
             when (state) {
                 PeerConnection.IceConnectionState.CONNECTED -> callback.onState(NativeStates.CONNECTED)
                 PeerConnection.IceConnectionState.DISCONNECTED,
@@ -403,9 +408,13 @@ class RtcEngine(
         }
 
         override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
-        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) = Unit
+        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
+            android.util.Log.i(TAG, "ice gathering state: $state")
+        }
+
         override fun onIceCandidate(candidate: IceCandidate?) {
             candidate ?: return
+            android.util.Log.i(TAG, "local ice candidate: ${candidate.sdp}")
             callback.onIceCandidate(candidate.sdp, candidate.sdpMid, candidate.sdpMLineIndex)
         }
 

@@ -144,7 +144,7 @@ class SessionManager extends ChangeNotifier {
     }
 
     final pc = await createPeerConnection({
-      'iceServers': [],
+      'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}, {'urls': 'stun:stun1.l.google.com:19302'}],
     });
 
     pc.onDataChannel = (channel) => _onDataChannel(channel);
@@ -164,6 +164,9 @@ class SessionManager extends ChangeNotifier {
     };
     pc.onIceConnectionState = (state) {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
+        if (_device?.connectedAt == null) {
+          _device?.connectedAt = DateTime.now();
+        }
         _device?.status = DeviceStatus.streaming;
         _setState(HostState.streaming);
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
@@ -219,14 +222,18 @@ class SessionManager extends ChangeNotifier {
     switch (json['type']) {
       case 'clipboard':
         _applyIncomingClipboard(json['text'] as String? ?? '');
+        break;
       case 'ping':
         _sendControl({'type': 'pong'});
+        break;
       case 'stats':
         _fps = (json['fps'] as num?)?.toInt() ?? _fps;
         _bps = (json['bps'] as num?)?.toInt() ?? _bps;
         notifyListeners();
+        break;
       case 'file':
         _onFileControl(json);
+        break;
       case 'pong':
         break;
     }
@@ -309,11 +316,16 @@ class SessionManager extends ChangeNotifier {
       frame.buffer.asUint8List().setAll(0, header.buffer.asUint8List());
       frame.buffer.asUint8List().setRange(24, 24 + chunk.length, chunk);
       frame.setUint64(16, offset);
-      channel.send(RTCDataChannelMessage.fromBinary(
-        frame.buffer.asUint8List(),
-      ));
+      final bytes = frame.buffer.asUint8List();
+      // Retry when the native send buffer is full so no chunk is dropped.
+      for (var attempt = 0; attempt < 100; attempt++) {
+        if (channel.send(RTCDataChannelMessage.fromBinary(bytes))) break;
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
       offset += chunk.length;
       _updateTransfer(id, received: offset);
+      // Let the native stack drain its send queue between chunks.
+      await Future<void>.delayed(const Duration(milliseconds: 1));
     }
 
     _sendControl({'type': 'file', 'op': 'done', 'id': id});
@@ -329,14 +341,17 @@ class SessionManager extends ChangeNotifier {
         final name = json['name'] as String? ?? 'file';
         final size = (json['size'] as num?)?.toInt() ?? 0;
         _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'from'));
+        break;
       case 'done':
         final file = _incoming.remove(id);
         if (file != null) {
           file.sink.close();
           _updateTransfer(id, done: true, path: file.path);
         }
+        break;
       case 'error':
         _incoming.remove(id)?.sink.close();
+        break;
     }
   }
 
@@ -474,3 +489,4 @@ class _IncomingFile {
   final String path;
   final IOSink sink;
 }
+
