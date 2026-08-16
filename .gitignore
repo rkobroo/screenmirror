@@ -17,8 +17,8 @@ android-app/android/app/.cxx/
 *.apk
 *.aab
 
-# ---- Windows (generated runner kept out of VCS; see docs/BUILD.md) ----
-windows-app/windows/
+# ---- Windows (runner committed so engine switches/Impeller config persist;
+#      ephemeral build output stays ignored via windows/.gitignore) ----
 
 # ---- Node / website ----
 node_modules/

@@ -24,8 +24,16 @@ and data channels — no C++ toolchain needed on the Android side.
 
 ## Windows app (`windows-app/`)
 
-The `windows/` platform runner is **not committed** to the repo (keeps the tree
-clean of generated boilerplate). Generate it once, then build:
+The `windows/` platform runner **is committed** to the repo (it carries the
+Impeller-disable engine switch required for flutter_webrtc's external video
+textures). If you regenerate it, re-apply the switch in `runner/main.cpp`:
+
+```cpp
+::SetEnvironmentVariableA("FLUTTER_ENGINE_SWITCHES", "1");
+::SetEnvironmentVariableA("FLUTTER_ENGINE_SWITCH_1", "enable-impeller=false");
+```
+
+Then build:
 
 ```bash
 cd windows-app
