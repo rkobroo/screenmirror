@@ -127,41 +127,12 @@ class SessionManager extends ChangeNotifier {
     }
   }
 
-  /// Try to parse the remote offer. Some libwebrtc builds reject `\n`-only
-  /// SDP or refuse `a=extmap-allow-mixed`; sanitize and retry so the real
-  /// parse error can't stall the session.
   Future<void> _setRemoteOffer(RTCPeerConnection pc, String sdp) async {
-    Future<void> apply(String candidate) =>
-        pc.setRemoteDescription(RTCSessionDescription('offer', candidate));
-    final candidates = <String>[
-      sdp,
-      // Candidate 1: strip extmap-allow-mixed (a pre-M66 libwebrtc parse killer).
-      sdp
-          .split('\n')
-          .where((l) => !l.trim().startsWith('a=extmap-allow-mixed'))
-          .join('\n'),
-      // Candidate 2: normalize line endings to CRLF with a trailing CRLF.
-      sdp
-              .split('\n')
-              .where((l) => !l.trim().startsWith('a=extmap-allow-mixed'))
-              .join('\n')
-              .replaceAll(RegExp(r'\r?\n'), '\r\n')
-              .trimRight() +
-          '\r\n',
-    ];
-    final labels = ['raw', 'extmap-allow-mixed stripped', 'CRLF normalized'];
-    Object? lastError;
-    for (var i = 0; i < candidates.length; i++) {
-      try {
-        await apply(candidates[i]);
-        _log('negotiate: setRemoteDescription ok (${labels[i]})');
-        return;
-      } catch (e) {
-        lastError = e;
-        _log('negotiate: ${labels[i]} setRemoteDescription failed: $e');
-      }
-    }
-    throw lastError ?? StateError('setRemoteDescription failed');
+    // NOTE: RTCSessionDescription(sdp, type) — sdp FIRST, type second.
+    // Passing ('offer', sdp) sends sdp='offer', type=<sdp>, so native
+    // rtc_sdp_type_from_string() returns -1 and setRemoteDescription fails
+    // with "Invalid type or sdp".
+    await pc.setRemoteDescription(RTCSessionDescription(sdp, 'offer'));
   }
 
   Future<void> _negotiate(String session, String sdp) async {
