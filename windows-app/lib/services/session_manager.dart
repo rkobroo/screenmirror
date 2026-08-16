@@ -316,16 +316,12 @@ class SessionManager extends ChangeNotifier {
       frame.buffer.asUint8List().setAll(0, header.buffer.asUint8List());
       frame.buffer.asUint8List().setRange(24, 24 + chunk.length, chunk);
       frame.setUint64(16, offset);
-      final bytes = frame.buffer.asUint8List();
-      // Retry when the native send buffer is full so no chunk is dropped.
-      for (var attempt = 0; attempt < 100; attempt++) {
-        if (channel.send(RTCDataChannelMessage.fromBinary(bytes))) break;
-        await Future<void>.delayed(const Duration(milliseconds: 10));
-      }
+      // send() awaits the native stack, which provides natural backpressure.
+      await channel.send(RTCDataChannelMessage.fromBinary(
+        frame.buffer.asUint8List(),
+      ));
       offset += chunk.length;
       _updateTransfer(id, received: offset);
-      // Let the native stack drain its send queue between chunks.
-      await Future<void>.delayed(const Duration(milliseconds: 1));
     }
 
     _sendControl({'type': 'file', 'op': 'done', 'id': id});
