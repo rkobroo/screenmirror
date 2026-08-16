@@ -133,33 +133,35 @@ class SessionManager extends ChangeNotifier {
   Future<void> _setRemoteOffer(RTCPeerConnection pc, String sdp) async {
     Future<void> apply(String candidate) =>
         pc.setRemoteDescription(RTCSessionDescription('offer', candidate));
-    try {
-      await apply(sdp);
-      _log('negotiate: setRemoteDescription ok (raw)');
-      return;
-    } catch (e) {
-      _log('negotiate: raw setRemoteDescription failed: $e');
+    final candidates = <String>[
+      sdp,
+      // Candidate 1: strip extmap-allow-mixed (a pre-M66 libwebrtc parse killer).
+      sdp
+          .split('\n')
+          .where((l) => !l.trim().startsWith('a=extmap-allow-mixed'))
+          .join('\n'),
+      // Candidate 2: normalize line endings to CRLF with a trailing CRLF.
+      sdp
+              .split('\n')
+              .where((l) => !l.trim().startsWith('a=extmap-allow-mixed'))
+              .join('\n')
+              .replaceAll(RegExp(r'\r?\n'), '\r\n')
+              .trimRight() +
+          '\r\n',
+    ];
+    final labels = ['raw', 'extmap-allow-mixed stripped', 'CRLF normalized'];
+    Object? lastError;
+    for (var i = 0; i < candidates.length; i++) {
+      try {
+        await apply(candidates[i]);
+        _log('negotiate: setRemoteDescription ok (${labels[i]})');
+        return;
+      } catch (e) {
+        lastError = e;
+        _log('negotiate: ${labels[i]} setRemoteDescription failed: $e');
+      }
     }
-    // Candidate 1: strip extmap-allow-mixed (a pre-M66 libwebrtc parse killer).
-    final noMixed =
-        sdp.split('\n').where((l) => !l.trim().startsWith('a=extmap-allow-mixed')).join('\n');
-    try {
-      await apply(noMixed);
-      _log('negotiate: setRemoteDescription ok (extmap-allow-mixed stripped)');
-      return;
-    } catch (e) {
-      _log('negotiate: stripped setRemoteDescription failed: $e');
-    }
-    // Candidate 2: normalize line endings to CRLF and ensure trailing CRLF.
-    final crlf = noMixed.replaceAll(RegExp(r'\r?\n'), '\r\n').trimRight() + '\r\n';
-    try {
-      await apply(crlf);
-      _log('negotiate: setRemoteDescription ok (CRLF normalized)');
-      return;
-    } catch (e) {
-      _log('negotiate: CRLF setRemoteDescription failed: $e');
-    }
-    rethrow;
+    throw lastError ?? StateError('setRemoteDescription failed');
   }
 
   Future<void> _negotiate(String session, String sdp) async {
