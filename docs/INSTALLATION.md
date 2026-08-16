@@ -5,13 +5,38 @@ Both must be on the **same Wi-Fi network**.
 
 ## Windows (PC)
 
-1. Download the latest `MirrorLink-Setup.exe` from
-   [GitHub Releases](https://github.com/rkobroo/screenmirror/releases).
-2. Run it and follow the installer.
-3. When Windows SmartScreen asks, choose **More info → Run anyway**
-   (the app is unsigned; this is expected for a hobbyist project).
+1. Download the latest `MirrorLink-Windows.zip` from
+   [GitHub Releases](https://github.com/rkobroo/screenmirror/releases)
+   (or the **Windows bundle** artifact of a CI run).
+2. Extract it and run `mirrorlink_windows.exe`.
+3. If Windows shows a blue **SmartScreen** prompt, choose **More info → Run
+   anyway** (the app is unsigned; this is expected for a hobbyist project).
 4. Open MirrorLink. A **6-digit pairing code** appears on the dashboard and the
    app starts broadcasting so your phone can find it.
+
+### "An application control policy has blocked this file" (Smart App Control)
+
+If the app runs once but then won't start from the taskbar with the error
+**"An application control policy has blocked this file. Dangerous file
+extension from the web"**, the EXE still carries the **Mark of the Web**
+(Zone.Identifier) that Windows added when the zip was downloaded. Fix it:
+
+1. Run the helper script (in the repo's `scripts/` folder):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\scripts\Unblock-MirrorLink.ps1
+   ```
+   Put it in the same folder as the downloaded `MirrorLink-Windows.zip`.
+2. **Delete** the old extracted folder, **re-extract** the zip, then **unpin and
+   repin** MirrorLink from the taskbar.
+
+> Without the script, do it by hand: right-click the zip → **Properties** →
+> tick **Unblock** → OK, then re-extract.
+
+**What's happening:** Windows adds a hidden `Zone.Identifier` stream to any
+file downloaded from the web. Smart App Control (Windows 11) and SmartScreen
+block unsigned executables carrying that flag. Unblocking removes it. The
+permanent fix is a code-signing certificate, which this hobbyist project
+doesn't have yet — see [docs/SECURITY.md](SECURITY.md).
 
 > Firewall: the first run will prompt Windows Firewall for ports 59660 (UDP)
 > and 59661 (TCP). Allow them on **private networks** only.

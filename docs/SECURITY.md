@@ -54,6 +54,11 @@ Out of scope (by design):
 - Releases are built **only** by GitHub Actions from tagged commits. Always
   download from the official repository's Releases page.
 - No third-party analytics, crash reporters, or telemetry SDKs are compiled in.
+- Binaries are **unsigned**. Windows SmartScreen and Smart App Control may
+  block them because of the downloaded "Mark of the Web" — see
+  [docs/INSTALLATION.md](INSTALLATION.md) for how to unblock. Code signing is
+  the long-term fix and is planned; until then, verify the SHA-256 hash of any
+  binary against the hash listed on the release page.
 
 ## Reporting a vulnerability
 
