@@ -19,7 +19,7 @@ class MjpegWriter {
     this.height,
     this.fps,
   ) {
-    _out = File(path).openSync(mode: FileMode.writeOnlyAppend);
+    _out = File(path).openSync(mode: FileMode.writeOnly);
     _writeHeader();
   }
 

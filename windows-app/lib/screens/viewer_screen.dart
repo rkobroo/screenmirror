@@ -33,6 +33,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   Offset? _lastDrag;
 
   bool _recording = false;
+  bool _capturing = false;
   MjpegWriter? _writer;
   Timer? _recTimer;
   bool _fullscreen = false;
@@ -228,21 +229,29 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _writer = MjpegWriter(path, size.width.round(), size.height.round(), 10);
 
     _recTimer = Timer.periodic(const Duration(milliseconds: 100), (_) async {
-      final image = await _capture();
-      if (image == null) return;
-      final width = image.width, height = image.height;
-      final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-      image.dispose();
-      if (data == null) return;
-      final frame = img.Image.fromBytes(
-        width: width,
-        height: height,
-        bytes: data.buffer,
-        order: img.ChannelOrder.rgba,
-        numChannels: 4,
-      );
-      final jpeg = img.encodeJpg(frame, quality: 70);
-      _writer?.addJpeg(jpeg);
+      // Skip if the previous frame is still being encoded — prevents async
+      // captures from stacking up on slow machines.
+      if (_capturing) return;
+      _capturing = true;
+      try {
+        final image = await _capture();
+        if (image == null) return;
+        final width = image.width, height = image.height;
+        final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        image.dispose();
+        if (data == null) return;
+        final frame = img.Image.fromBytes(
+          width: width,
+          height: height,
+          bytes: data.buffer,
+          order: img.ChannelOrder.rgba,
+          numChannels: 4,
+        );
+        final jpeg = img.encodeJpg(frame, quality: 70);
+        _writer?.addJpeg(jpeg);
+      } finally {
+        _capturing = false;
+      }
     });
 
     setState(() => _recording = true);

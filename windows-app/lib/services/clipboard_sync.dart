@@ -29,11 +29,15 @@ class ClipboardSync {
 
   Future<void> _poll() async {
     if (!session.isStreaming) return;
-    final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text ?? '';
-    if (text.isNotEmpty && text != _last) {
-      _last = text;
-      session.sendClipboard(text);
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      final text = data?.text ?? '';
+      if (text.isNotEmpty && text != _last) {
+        _last = text;
+        session.sendClipboard(text);
+      }
+    } catch (_) {
+      // Clipboard read failed; try again next tick.
     }
   }
 
