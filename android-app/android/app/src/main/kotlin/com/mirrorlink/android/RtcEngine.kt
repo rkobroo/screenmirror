@@ -692,16 +692,14 @@ class RtcEngine(
                 callback.onFileDone(id, file.name)
                 // Open the received file and show a toast.
                 if (uri != null) {
-                    val mime = android.webkit.MimeTypeMap.getSingleton()
-                        .getMimeTypeFromExtension(file.name.substringAfterLast('.', '').lowercase())
-                        ?: "*/*"
+                    val mime = mimeFromExtension(file.name)
                     mainHandler.post {
                         try {
-                            val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                            val openIntent = Intent(Intent.ACTION_VIEW).apply {
                                 setDataAndType(uri, mime)
-                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
-                            context.startActivity(android.content.Intent.createChooser(openIntent, "Open ${file.name}"))
+                            context.startActivity(Intent.createChooser(openIntent, "Open ${file.name}"))
                         } catch (_: Exception) {}
                         android.widget.Toast.makeText(
                             context,
@@ -716,10 +714,29 @@ class RtcEngine(
         }
     }
 
+    private fun mimeFromExtension(name: String): String {
+        val ext = name.substringAfterLast('.', "").lowercase()
+        return when (ext) {
+            "mp4" -> "video/mp4"
+            "webm" -> "video/webm"
+            "mkv" -> "video/x-matroska"
+            "avi" -> "video/x-msvideo"
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "webp" -> "image/webp"
+            "mp3" -> "audio/mpeg"
+            "ogg" -> "audio/ogg"
+            "pdf" -> "application/pdf"
+            "txt" -> "text/plain"
+            "zip" -> "application/zip"
+            "apk" -> "application/vnd.android.package-archive"
+            else -> "application/octet-stream"
+        }
+    }
+
     private fun openMediaStoreOutput(file: IncomingFile, id: String): java.io.OutputStream? {
-        val mime = android.webkit.MimeTypeMap.getSingleton()
-            .getMimeTypeFromExtension(file.name.substringAfterLast('.', '').lowercase())
-            ?: "application/octet-stream"
+        val mime = mimeFromExtension(file.name)
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
             put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
