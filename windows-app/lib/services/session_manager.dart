@@ -399,15 +399,18 @@ class SessionManager extends ChangeNotifier {
   }
 
   void _onControlMessage(RTCDataChannelMessage message) {
-    if (message.isBinary) return;
+    final raw = message.isBinary
+        ? String.fromCharCodes(message.binary)
+        : message.text;
     final Map<String, dynamic> json;
     try {
-      json = jsonDecode(message.text) as Map<String, dynamic>;
+      json = jsonDecode(raw) as Map<String, dynamic>;
     } catch (_) {
       return;
     }
 
-    switch (json['type']) {
+      _log('control msg type=${json['type']}');
+      switch (json['type']) {
       case 'clipboard':
         _applyIncomingClipboard(json['text'] as String? ?? '');
         break;
