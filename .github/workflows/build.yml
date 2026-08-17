@@ -35,9 +35,8 @@ jobs:
           flutter build apk --release > build.log 2>&1
           code=$?
           if [ $code -ne 0 ]; then
-            echo "::group::Android build failed"
-            tail -n 60 build.log
-            echo "::endgroup::"
+            echo "=== BUILD FAILED (exit $code) — showing log ==="
+            cat build.log
           fi
           exit $code
 
@@ -52,13 +51,23 @@ jobs:
             try {
               const log = fs.readFileSync(path, 'utf8');
               const lines = log.split(/\r?\n/);
-              // Find the actual Kotlin/Java compile error
-              const errIdx = lines.findIndex(l => l.includes('error:') || l.includes('e:'));
-              if (errIdx >= 0) {
-                tail = lines.slice(Math.max(0, errIdx - 2), errIdx + 5).join('\n');
-              } else {
-                tail = lines.slice(-20).join('\n');
+              // Search for various error patterns
+              const patterns = ['error:', 'e: ', 'FAILURE', 'Exception', 'undefined', 'Unresolved', 'cannot find', 'What went wrong', 'compileReleaseKotlin', 'exit code', 'failed'];
+              let errLines = [];
+              for (let i = 0; i < lines.length; i++) {
+                if (patterns.some(p => lines[i].includes(p))) {
+                  errLines.push(`[${i}] ${lines[i]}`);
+                }
               }
+              if (errLines.length > 0) {
+                tail = errLines.join('\n');
+              } else {
+                tail = lines.slice(-30).join('\n');
+              }
+              // Also log the full build output for debugging
+              core.info('=== FULL BUILD LOG ===');
+              core.info(log);
+              core.info('=== END BUILD LOG ===');
             } catch (e) { tail = '(no build.log)'; }
             if (tail) core.error(tail);
             const statusMsg = tail.replace(/\s+/g, ' ').slice(0, 140);
