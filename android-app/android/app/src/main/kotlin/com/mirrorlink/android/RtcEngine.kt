@@ -157,17 +157,8 @@ class RtcEngine(
 
         // Apply the requested bitrate to the video sender so the encoder
         // doesn't fall back to its very low default (~200 kbps).
-        try {
-            peer.senders.firstOrNull { it.track?.kind() == "video" }?.let { sender ->
-                val params = sender.parameters
-                if (params.encodings.isNotEmpty()) {
-                    params.encodings[0].maxBitrateBps = config.bitrate.toLong()
-                    sender.parameters = params
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.w(TAG, "Failed to set bitrate: $e")
-        }
+        // We set this via SDP b=AS attribute in createOffer instead of
+        // RtpParameters (which is read-only in this WebRTC SDK version).
 
         // Phone-owned data channels (docs/PROTOCOL.md §6).
         controlChannel = peer.createDataChannel(CONTROL, DataChannel.Init())
@@ -238,17 +229,20 @@ class RtcEngine(
         peer.createOffer(
             object : SdpObserver {
                 override fun onCreateSuccess(offer: SessionDescription?) {
+                    // Inject bitrate hint into SDP so the encoder respects it.
+                    val modified = injectBitrate(offer?.description)
+
                     peer.setLocalDescription(
                         object : SdpObserver {
                             override fun onSetSuccess() {
-                                done(offer?.description)
+                                done(modified)
                             }
 
                             override fun onSetFailure(error: String?) = done(null)
                             override fun onCreateSuccess(d: SessionDescription?) = Unit
                             override fun onCreateFailure(e: String?) = Unit
                         },
-                        offer,
+                        SessionDescription(SessionDescription.Type.OFFER, modified),
                     )
                 }
 
@@ -258,6 +252,14 @@ class RtcEngine(
             },
             MediaConstraints(),
         )
+    }
+
+    /** Insert b=AS:<kbps> into the video m= line of the SDP offer. */
+    private fun injectBitrate(sdp: String?): String {
+        if (sdp == null) return ""
+        val kbps = (lastConfig?.bitrate ?: 4_000_000) / 1000
+        // Insert b=AS right after the m=video line.
+        return sdp.replaceFirst(Regex("(m=video\\s+\\d+\\s+[^\r\n]+)"), "$1\r\nb=AS:$kbps")
     }
 
     /** Apply the PC's SDP answer. */
