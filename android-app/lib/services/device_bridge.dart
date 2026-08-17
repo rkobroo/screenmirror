@@ -133,6 +133,7 @@ abstract class EventType {
   static const dcOpen = 'dcOpen';
   static const data = 'data';
   static const clipboard = 'clipboard';
+  static const chat = 'chat';
   static const fileProgress = 'fileProgress';
   static const fileDone = 'fileDone';
   static const stats = 'stats';

@@ -38,6 +38,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
   Timer? _recTimer;
   bool _fullscreen = false;
   bool _showChat = false;
+  bool _toolbarVisible = true;
+  Timer? _toolbarHideTimer;
 
   AppServices? _services;
 
@@ -60,6 +62,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _stopRecording();
     _textController.dispose();
     _textFocusNode.dispose();
+    _toolbarHideTimer?.cancel();
     super.dispose();
   }
 
@@ -108,7 +111,6 @@ class _ViewerScreenState extends State<ViewerScreen> {
     final p = _normalize(e.localPosition);
     _dragStart = p;
     _lastDrag = p;
-    services.session.sendTouch(p.dx, p.dy, 0);
   }
 
   void _onPointerMove(PointerMoveEvent e) {
@@ -147,6 +149,14 @@ class _ViewerScreenState extends State<ViewerScreen> {
     final services = _services;
     if (services == null || !services.session.isStreaming) return false;
     if (event is! KeyDownEvent) return false;
+
+    // ESC always exits fullscreen regardless of other state.
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      if (_fullscreen) {
+        _toggleFullscreen();
+        return true;
+      }
+    }
 
     // Don't forward keys when the text input has focus.
     if (_textFocusNode.hasFocus) return false;
@@ -211,7 +221,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
       LogicalKeyboardKey.enter: 66,
       LogicalKeyboardKey.backspace: 67,
       LogicalKeyboardKey.tab: 61,
-      LogicalKeyboardKey.escape: 4, // BACK
+      LogicalKeyboardKey.escape: 4, // Also handled as exit-fullscreen above
       LogicalKeyboardKey.delete: 112,
       LogicalKeyboardKey.space: 62,
       LogicalKeyboardKey.arrowUp: 19,
@@ -341,7 +351,29 @@ class _ViewerScreenState extends State<ViewerScreen> {
   Future<void> _toggleFullscreen() async {
     final next = !_fullscreen;
     await windowManager.setFullScreen(next);
-    if (mounted) setState(() => _fullscreen = next);
+    if (mounted) {
+      setState(() {
+        _fullscreen = next;
+        _toolbarVisible = true;
+      });
+      _scheduleToolbarHide();
+    }
+  }
+
+  void _onMouseActivity() {
+    if (_fullscreen && !_toolbarVisible) {
+      setState(() => _toolbarVisible = true);
+    }
+    _scheduleToolbarHide();
+  }
+
+  void _scheduleToolbarHide() {
+    _toolbarHideTimer?.cancel();
+    if (_fullscreen) {
+      _toolbarHideTimer = Timer(const Duration(seconds: 3), () {
+        if (mounted && _fullscreen) setState(() => _toolbarVisible = false);
+      });
+    }
   }
 
   void _sendTextMessage() {
@@ -417,27 +449,31 @@ class _ViewerScreenState extends State<ViewerScreen> {
                                   constraints.maxWidth,
                                   constraints.maxHeight,
                                 );
-                                return Listener(
-                                  onPointerDown: _onPointerDown,
-                                  onPointerMove: _onPointerMove,
-                                  onPointerUp: _onPointerUp,
-                                  onPointerCancel: (_) => _dragStart = null,
-                                  onPointerSignal: (e) {
-                                    if (e is PointerScrollEvent && session.isStreaming) {
-                                      session.sendScroll(e.scrollDelta.dx, e.scrollDelta.dy);
-                                    }
-                                  },
-                                  child: RepaintBoundary(
-                                    key: _boundaryKey,
-                                    child: streaming
-                                        ? _VideoView(session: session)
-                                        : _NoStreamPlaceholder(error: session.error),
+                                return MouseRegion(
+                                  onHover: (_) => _onMouseActivity(),
+                                  child: Listener(
+                                    onPointerDown: _onPointerDown,
+                                    onPointerMove: _onPointerMove,
+                                    onPointerUp: _onPointerUp,
+                                    onPointerCancel: (_) => _dragStart = null,
+                                    onPointerSignal: (e) {
+                                      if (e is PointerScrollEvent && session.isStreaming) {
+                                        session.sendScroll(e.scrollDelta.dx, e.scrollDelta.dy);
+                                      }
+                                    },
+                                    child: RepaintBoundary(
+                                      key: _boundaryKey,
+                                      child: streaming
+                                          ? _VideoView(session: session)
+                                          : _NoStreamPlaceholder(error: session.error),
+                                    ),
                                   ),
                                 );
                               },
                             ),
                           ),
                           _Toolbar(
+                            visible: !_fullscreen || _toolbarVisible,
                             streaming: streaming,
                             recording: _recording,
                             fullscreen: _fullscreen,
@@ -878,6 +914,7 @@ class _ChatBubble extends StatelessWidget {
 
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
+    required this.visible,
     required this.streaming,
     required this.recording,
     required this.fullscreen,
@@ -896,6 +933,7 @@ class _Toolbar extends StatelessWidget {
     required this.onClose,
   });
 
+  final bool visible;
   final bool streaming;
   final bool recording;
   final bool fullscreen;
@@ -926,8 +964,10 @@ class _Toolbar extends StatelessWidget {
       );
     }
 
-    return Positioned(
-      top: 0,
+    return AnimatedPositioned(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOut,
+      top: visible ? 0 : -60,
       left: 0,
       right: 0,
       child: Container(

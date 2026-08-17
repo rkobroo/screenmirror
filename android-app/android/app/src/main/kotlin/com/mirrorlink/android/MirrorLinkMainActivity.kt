@@ -194,6 +194,10 @@ class MirrorLinkMainActivity : FlutterActivity(), RtcEngine.Callback {
         emit("clipboard", mapOf("text" to text))
     }
 
+    override fun onChat(text: String) {
+        emit("chat", mapOf("text" to text))
+    }
+
     override fun onFileProgress(id: String, received: Long, total: Long) {
         emit(
             "fileProgress",

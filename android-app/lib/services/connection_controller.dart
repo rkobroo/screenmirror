@@ -20,6 +20,18 @@ enum ConnectionState {
   error,
 }
 
+class ChatMessage {
+  const ChatMessage({
+    required this.text,
+    required this.fromMe,
+    required this.time,
+  });
+
+  final String text;
+  final bool fromMe;
+  final DateTime time;
+}
+
 /// Orchestrates the phone side of a session:
 ///
 /// discovery → pairing (WebSocket) → WebRTC negotiation (native) → streaming.
@@ -39,6 +51,7 @@ class ConnectionController extends ChangeNotifier {
   final SettingsService settings;
 
   final List<NearbyDevice> _devices = [];
+  final List<ChatMessage> _messages = [];
 
   ConnectionState _state = ConnectionState.idle;
   NearbyDevice? _connectedTo;
@@ -57,6 +70,7 @@ class ConnectionController extends ChangeNotifier {
   int get bps => _bps;
   String get lastError => _lastError;
   bool get isStreaming => _state == ConnectionState.streaming;
+  List<ChatMessage> get messages => List.unmodifiable(_messages);
 
   /// Debounced rebuild throttle for high-frequency stats events.
   DateTime _lastNotify = DateTime.fromMillisecondsSinceEpoch(0);
@@ -211,6 +225,13 @@ class ConnectionController extends ChangeNotifier {
       case EventType.clipboard:
         _handlePhoneClipboard(event['text'] as String? ?? '');
         break;
+      case EventType.chat:
+        final text = event['text'] as String? ?? '';
+        if (text.isNotEmpty) {
+          _messages.add(ChatMessage(text: text, fromMe: false, time: DateTime.now()));
+          notifyListeners();
+        }
+        break;
       case EventType.stats:
         _fps = (event['fps'] as num?)?.toInt() ?? 0;
         _bps = (event['bps'] as num?)?.toInt() ?? 0;
@@ -253,6 +274,15 @@ class ConnectionController extends ChangeNotifier {
   /// Called from the Home screen's "Start Mirroring" button.
   Future<void> startMirroring() async {
     await bridge.requestProjection();
+  }
+
+  /// Send a chat message to the PC.
+  void sendChatMessage(String text) {
+    if (text.isEmpty || !isStreaming) return;
+    final json = '{"type":"chat","text":"${text.replaceAll('"', '\\"')}"}';
+    bridge.sendData('control', json);
+    _messages.add(ChatMessage(text: text, fromMe: true, time: DateTime.now()));
+    notifyListeners();
   }
 
   // ---- misc ----------------------------------------------------------------

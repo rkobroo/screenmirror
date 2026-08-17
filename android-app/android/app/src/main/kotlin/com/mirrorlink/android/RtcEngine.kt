@@ -50,6 +50,7 @@ class RtcEngine(
         fun onState(state: String)
         fun onStats(fps: Int, bps: Long)
         fun onClipboard(text: String)
+        fun onChat(text: String)
         fun onFileProgress(id: String, received: Long, total: Long)
         fun onFileDone(id: String, name: String)
         fun onDataChannelOpened(channel: String)
@@ -651,7 +652,7 @@ class RtcEngine(
             "chat" -> {
                 val t = json.optString("text")
                 if (t.isNotEmpty()) {
-                    callback.onClipboard(t)
+                    callback.onChat(t)
                     mainHandler.post {
                         android.widget.Toast.makeText(
                             context,

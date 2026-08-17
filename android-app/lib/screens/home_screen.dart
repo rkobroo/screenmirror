@@ -144,6 +144,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: () => controller.disconnect(),
                 ),
               const SizedBox(height: 24),
+              _ChatCard(services: services),
+              const SizedBox(height: 16),
               _FileTransfersCard(services: services),
             ],
           );
@@ -286,6 +288,176 @@ class _AccessibilityBannerState extends State<_AccessibilityBanner> {
             await _check();
           },
           child: const Text('Enable'),
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatCard extends StatefulWidget {
+  const _ChatCard({required this.services});
+
+  final AppServices services;
+
+  @override
+  State<_ChatCard> createState() => _ChatCardState();
+}
+
+class _ChatCardState extends State<_ChatCard> {
+  final _textCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+
+  @override
+  void dispose() {
+    _textCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final text = _textCtrl.text.trim();
+    if (text.isEmpty) return;
+    widget.services.controller.sendChatMessage(text);
+    _textCtrl.clear();
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final controller = widget.services.controller;
+    final messages = controller.messages;
+    final connected = controller.state == ConnectionState.streaming ||
+        controller.state == ConnectionState.negotiating;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.chat_bubble_outline, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Text('Chat',
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w600)),
+                const Spacer(),
+                if (messages.isNotEmpty)
+                  Text('${messages.length}',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (!connected)
+              Text('Connect to PC to chat.',
+                  style: theme.textTheme.bodySmall)
+            else ...[
+              Container(
+                height: 180,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withAlpha(80),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: messages.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No messages yet.',
+                          style: TextStyle(color: Colors.white38, fontSize: 12),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scrollCtrl,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          final msg = messages[index];
+                          final isMe = msg.fromMe;
+                          final timeStr =
+                              '${msg.time.hour.toString().padLeft(2, '0')}:${msg.time.minute.toString().padLeft(2, '0')}';
+                          return Align(
+                            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+                            child: Container(
+                              margin: const EdgeInsets.symmetric(vertical: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              constraints: BoxConstraints(
+                                maxWidth: MediaQuery.of(context).size.width * 0.7,
+                              ),
+                              decoration: BoxDecoration(
+                                color: isMe
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: isMe
+                                    ? CrossAxisAlignment.end
+                                    : CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    msg.text,
+                                    style: TextStyle(
+                                      color: isMe
+                                          ? theme.colorScheme.onPrimary
+                                          : theme.colorScheme.onSurface,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${isMe ? "You" : "PC"} · $timeStr',
+                                    style: TextStyle(
+                                      color: isMe
+                                          ? theme.colorScheme.onPrimary.withAlpha(140)
+                                          : Colors.white38,
+                                      fontSize: 9,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _textCtrl,
+                      style: const TextStyle(fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Type a message...',
+                        hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onSubmitted: (_) => _send(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: _send,
+                    icon: Icon(Icons.send, color: theme.colorScheme.primary),
+                  ),
+                ],
+              ),
+            ],
+          ],
         ),
       ),
     );
