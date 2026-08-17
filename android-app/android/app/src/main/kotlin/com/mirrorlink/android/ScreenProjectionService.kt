@@ -28,6 +28,13 @@ class ScreenProjectionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            RtcEngineHolder.engine?.stop()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         val data = intent?.getParcelableExtra(EXTRA_RESULT_DATA) as? android.content.Intent
         if (Build.VERSION.SDK_INT >= 29) {
@@ -47,6 +54,13 @@ class ScreenProjectionService : Service() {
             stopSelf()
         }
         return START_NOT_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        RtcEngineHolder.engine?.stop()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
 
     private fun createChannel() {

@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart' hide ConnectionState;
-import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../app_services.dart';
 import '../models/nearby_device.dart';
 import '../services/connection_controller.dart';
 import '../widgets/device_list.dart';
 
-/// Pairing flow: shows discovered PCs, lets the user scan a QR code from the
-/// PC app, or enter the 6-digit pairing code manually.
+/// Pairing flow: shows discovered PCs and lets the user enter the 6-digit
+/// pairing code manually.
 class PairingScreen extends StatefulWidget {
   const PairingScreen({super.key});
 
@@ -178,43 +177,6 @@ class _PairingScreenState extends State<PairingScreen> {
                 devices: devices,
                 onConnect: (device) => _connect(device),
               ),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Text('Scan QR from PC',
-                      style: Theme.of(context).textTheme.titleSmall),
-                  const Spacer(),
-                ],
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 220,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: MobileScanner(
-                    onDetect: (capture) {
-                      final raw = capture.barcodes
-                          .map((b) => b.rawValue)
-                          .whereType<String>()
-                          .firstOrNull;
-                      if (raw == null) return;
-                      _handleQrPayload(raw);
-                    },
-                    errorBuilder: (context, error, child) => const Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.camera_alt_outlined, size: 40),
-                          SizedBox(height: 8),
-                          Text('Camera unavailable'),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
               const SizedBox(height: 16),
             ],
           );
@@ -223,17 +185,4 @@ class _PairingScreenState extends State<PairingScreen> {
     );
   }
 
-  /// Parse `mirrorlink://pair?ip=..&port=..&code=..` and connect.
-  void _handleQrPayload(String raw) {
-    final uri = Uri.tryParse(raw);
-    if (uri == null || uri.host != 'pair') return;
-
-    final ip = uri.queryParameters['ip'];
-    final port = int.tryParse(uri.queryParameters['port'] ?? '') ?? 59661;
-    final code = uri.queryParameters['code'];
-    if (ip == null || code == null) return;
-
-    _codeController.text = code;
-    _connect(NearbyDevice(name: 'QR device', ip: ip, port: port));
-  }
 }

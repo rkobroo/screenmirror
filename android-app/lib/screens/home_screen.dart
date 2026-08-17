@@ -372,7 +372,7 @@ class _ChatCardState extends State<_ChatCard> {
               ],
             ),
             const SizedBox(height: 8),
-            if (!connected)
+            if (messages.isEmpty && !connected)
               Text('Connect to PC to chat.',
                   style: theme.textTheme.bodySmall)
             else ...[
@@ -445,38 +445,40 @@ class _ChatCardState extends State<_ChatCard> {
                       ),
               ),
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: _pickAndSendImage,
-                    icon: const Icon(Icons.attach_file, size: 20),
-                    tooltip: 'Attach photo',
-                  ),
-                  Expanded(
-                    child: TextField(
-                      controller: _textCtrl,
-                      style: const TextStyle(fontSize: 13),
-                      decoration: InputDecoration(
-                        hintText: 'Type a message...',
-                        hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
-                        filled: true,
-                        fillColor: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                      onSubmitted: (_) => _send(),
+              if (connected) ...[
+                Row(
+                  children: [
+                    IconButton(
+                      onPressed: _pickAndSendImage,
+                      icon: const Icon(Icons.attach_file, size: 20),
+                      tooltip: 'Attach photo',
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    onPressed: _send,
-                    icon: Icon(Icons.send, color: theme.colorScheme.primary),
-                  ),
-                ],
-              ),
+                    Expanded(
+                      child: TextField(
+                        controller: _textCtrl,
+                        style: const TextStyle(fontSize: 13),
+                        decoration: InputDecoration(
+                          hintText: 'Type a message...',
+                          hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                          filled: true,
+                          fillColor: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(24),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                        onSubmitted: (_) => _send(),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      onPressed: _send,
+                      icon: Icon(Icons.send, color: theme.colorScheme.primary),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ],
         ),

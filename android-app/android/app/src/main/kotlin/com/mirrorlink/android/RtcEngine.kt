@@ -640,26 +640,12 @@ class RtcEngine(
                     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     manager.setPrimaryClip(ClipData.newPlainText("mirrorlink", t))
                     callback.onClipboard(t)
-                    mainHandler.post {
-                        android.widget.Toast.makeText(
-                            context,
-                            "Clipboard synced: ${t.take(60)}${if (t.length > 60) "…" else ""}",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
                 }
             }
             "chat" -> {
                 val t = json.optString("text")
                 if (t.isNotEmpty()) {
                     callback.onChat(t)
-                    mainHandler.post {
-                        android.widget.Toast.makeText(
-                            context,
-                            "PC: $t",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
                 }
             }
             "ping" -> sendControl("""{"type":"pong"}""")

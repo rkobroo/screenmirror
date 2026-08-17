@@ -39,6 +39,7 @@
         <service
             android:name=".ScreenProjectionService"
             android:exported="false"
+            android:stopWithTask="true"
             android:foregroundServiceType="mediaProjection"
             tools:targetApi="q">
             <intent-filter>

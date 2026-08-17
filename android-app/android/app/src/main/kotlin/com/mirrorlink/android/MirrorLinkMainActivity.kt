@@ -217,6 +217,7 @@ class MirrorLinkMainActivity : FlutterActivity(), RtcEngine.Callback {
         engine?.stop()
         engine = null
         RtcEngineHolder.engine = null
+        stopScreenService()
         super.onDestroy()
     }
 }
