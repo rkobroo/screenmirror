@@ -223,6 +223,9 @@ class RtcEngine(
             newCapturer.startCapture(w, h, fps)
         }
         capturer = newCapturer
+
+        // Send actual capture dimensions to the PC so touch mapping works.
+        sendCaptureDimensions(w, h)
     }
 
     /** Generate the local offer SDP (phone is the offerer). */
@@ -580,6 +583,18 @@ class RtcEngine(
         surfaceTextureHelper.handler.post {
             cap.changeCaptureFormat(w, h, fps)
         }
+        sendCaptureDimensions(w, h)
+    }
+
+    /** Tell the PC the actual capture resolution so touch coordinates map correctly. */
+    private fun sendCaptureDimensions(w: Int, h: Int) {
+        sendControl(
+            JSONObject()
+                .put("type", "dimensions")
+                .put("width", w)
+                .put("height", h)
+                .toString(),
+        )
     }
 
     private var lastConfig: Config? = null
@@ -628,6 +643,19 @@ class RtcEngine(
                         android.widget.Toast.makeText(
                             context,
                             "Clipboard synced: ${t.take(60)}${if (t.length > 60) "…" else ""}",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+            }
+            "chat" -> {
+                val t = json.optString("text")
+                if (t.isNotEmpty()) {
+                    callback.onClipboard(t)
+                    mainHandler.post {
+                        android.widget.Toast.makeText(
+                            context,
+                            "PC: $t",
                             android.widget.Toast.LENGTH_SHORT,
                         ).show()
                     }

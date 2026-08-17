@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -46,6 +47,62 @@ class Transfer {
       );
 }
 
+enum ChatMessageType { text, file, image }
+
+@immutable
+class ChatMessage {
+  const ChatMessage({
+    required this.text,
+    required this.fromMe,
+    required this.time,
+    this.type = ChatMessageType.text,
+    this.filePath = '',
+    this.fileName = '',
+    this.fileSize = 0,
+    this.fileProgress = 0,
+    this.fileDone = false,
+    this.transferId = '',
+  });
+
+  final String text;
+  final bool fromMe;
+  final DateTime time;
+  final ChatMessageType type;
+  final String filePath;
+  final String fileName;
+  final int fileSize;
+  final int fileProgress;
+  final bool fileDone;
+  final String transferId;
+
+  double get fraction =>
+      fileSize <= 0 ? 0 : (fileProgress / fileSize).clamp(0.0, 1.0);
+
+  ChatMessage copyWith({
+    String? text,
+    bool? fromMe,
+    ChatMessageType? type,
+    String? filePath,
+    String? fileName,
+    int? fileSize,
+    int? fileProgress,
+    bool? fileDone,
+    String? transferId,
+  }) =>
+      ChatMessage(
+        text: text ?? this.text,
+        fromMe: fromMe ?? this.fromMe,
+        time: time,
+        type: type ?? this.type,
+        filePath: filePath ?? this.filePath,
+        fileName: fileName ?? this.fileName,
+        fileSize: fileSize ?? this.fileSize,
+        fileProgress: fileProgress ?? this.fileProgress,
+        fileDone: fileDone ?? this.fileDone,
+        transferId: transferId ?? this.transferId,
+      );
+}
+
 /// Owns the WebRTC session with the connected phone: negotiates the answer,
 /// feeds the incoming video track to the viewer renderer, and manages the
 /// `control` + `files` data channels.
@@ -59,8 +116,10 @@ class SessionManager extends ChangeNotifier {
   int _fps = 0;
   int _bps = 0;
   String _error = '';
+  Size _captureSize = Size.zero;
 
   final List<Transfer> _transfers = [];
+  final List<ChatMessage> _messages = [];
   final Random _random = Random.secure();
 
   RTCPeerConnection? _pc;
@@ -75,7 +134,9 @@ class SessionManager extends ChangeNotifier {
   int get fps => _fps;
   int get bps => _bps;
   String get error => _error;
+  Size get captureSize => _captureSize;
   List<Transfer> get transfers => List.unmodifiable(_transfers);
+  List<ChatMessage> get messages => List.unmodifiable(_messages);
   bool get isStreaming => _state == HostState.streaming;
 
   // ---- inbound file bookkeeping (phone → PC) --------------------------------
@@ -359,6 +420,26 @@ class SessionManager extends ChangeNotifier {
         _bps = (json['bps'] as num?)?.toInt() ?? _bps;
         notifyListeners();
         break;
+      case 'dimensions':
+        final w = (json['width'] as num?)?.toDouble() ?? 0;
+        final h = (json['height'] as num?)?.toDouble() ?? 0;
+        if (w > 0 && h > 0) {
+          _captureSize = Size(w, h);
+          _log('phone dimensions: ${w}x$h');
+          notifyListeners();
+        }
+        break;
+      case 'chat':
+        final text = json['text'] as String? ?? '';
+        if (text.isNotEmpty) {
+          _messages.add(ChatMessage(
+            text: text,
+            fromMe: false,
+            time: DateTime.now(),
+          ));
+          notifyListeners();
+        }
+        break;
       case 'file':
         _onFileControl(json);
         break;
@@ -404,6 +485,18 @@ class SessionManager extends ChangeNotifier {
 
   void sendText(String value) => _sendControl({'type': 'input', 'kind': 'text', 'value': value});
 
+  /// Send a chat text message and add it to the local message list.
+  void sendChatMessage(String text) {
+    if (!isStreaming || text.isEmpty) return;
+    _sendControl({'type': 'chat', 'text': text});
+    _messages.add(ChatMessage(
+      text: text,
+      fromMe: true,
+      time: DateTime.now(),
+    ));
+    notifyListeners();
+  }
+
   void sendSysButton(String button) =>
       _sendControl({'type': 'input', 'kind': 'sys', 'button': button});
 
@@ -426,6 +519,15 @@ class SessionManager extends ChangeNotifier {
     final name = file.uri.pathSegments.last;
 
     _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'to'));
+    _messages.add(ChatMessage(
+      text: 'Sending $name',
+      fromMe: true,
+      time: DateTime.now(),
+      type: ChatMessageType.file,
+      fileName: name,
+      fileSize: size,
+      transferId: id,
+    ));
     notifyListeners();
 
     _sendControl({
@@ -458,6 +560,11 @@ class SessionManager extends ChangeNotifier {
 
     _sendControl({'type': 'file', 'op': 'done', 'id': id});
     _updateTransfer(id, done: true);
+    final msgIdx = _messages.indexWhere((m) => m.transferId == id);
+    if (msgIdx >= 0) {
+      _messages[msgIdx] = _messages[msgIdx].copyWith(text: '$name sent', fileDone: true);
+    }
+    notifyListeners();
   }
 
   // ---- inbound file transfer (phone → PC) --------------------------------------
@@ -469,6 +576,16 @@ class SessionManager extends ChangeNotifier {
         final name = json['name'] as String? ?? 'file';
         final size = (json['size'] as num?)?.toInt() ?? 0;
         _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'from'));
+        _messages.add(ChatMessage(
+          text: 'Receiving $name',
+          fromMe: false,
+          time: DateTime.now(),
+          type: ChatMessageType.file,
+          fileName: name,
+          fileSize: size,
+          transferId: id,
+        ));
+        notifyListeners();
         break;
       case 'done':
         final file = _incoming.remove(id);
@@ -480,6 +597,17 @@ class SessionManager extends ChangeNotifier {
             (t) => t.id == id,
             orElse: () => Transfer(id: id, name: file.path.split('\\').last, size: 0, direction: 'from'),
           );
+          _messages.add(ChatMessage(
+            text: '${transfer.name} saved',
+            fromMe: false,
+            time: DateTime.now(),
+            type: ChatMessageType.file,
+            fileName: transfer.name,
+            filePath: file.path,
+            fileSize: transfer.size,
+            fileProgress: transfer.size,
+            fileDone: true,
+          ));
           onFileReceived?.call(transfer.name, file.path);
         }
         break;
@@ -546,12 +674,22 @@ class SessionManager extends ChangeNotifier {
 
   void _updateTransfer(String id, {int? received, bool? done, String? path}) {
     final index = _transfers.indexWhere((t) => t.id == id);
-    if (index < 0) return;
-    _transfers[index] = _transfers[index].copyWith(
-      received: received,
-      done: done,
-      path: path,
-    );
+    if (index >= 0) {
+      _transfers[index] = _transfers[index].copyWith(
+        received: received,
+        done: done,
+        path: path,
+      );
+    }
+    // Also update the corresponding chat message.
+    final msgIdx = _messages.indexWhere((m) => m.transferId == id);
+    if (msgIdx >= 0) {
+      _messages[msgIdx] = _messages[msgIdx].copyWith(
+        fileProgress: received,
+        fileDone: done,
+        filePath: path,
+      );
+    }
     notifyListeners();
   }
 

@@ -37,13 +37,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
   MjpegWriter? _writer;
   Timer? _recTimer;
   bool _fullscreen = false;
+  bool _showChat = false;
 
   AppServices? _services;
 
   // ---- touch fix: track video & container dimensions ----
   Size _containerSize = Size.zero;
-  Size _videoSize = Size.zero;
-  Timer? _videoSizePoll;
 
   // ---- text input bar ----
   final _textController = TextEditingController();
@@ -53,40 +52,24 @@ class _ViewerScreenState extends State<ViewerScreen> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_onKey);
-    _videoSizePoll = Timer.periodic(
-      const Duration(milliseconds: 500),
-      _pollVideoSize,
-    );
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
     _stopRecording();
-    _videoSizePoll?.cancel();
     _textController.dispose();
     _textFocusNode.dispose();
     super.dispose();
   }
 
-  void _pollVideoSize(Timer _) {
-    if (_services?.session.isStreaming != true) return;
-    final r = _services?.session.renderer;
-    if (r == null) return;
-    final w = r.value.width.toDouble();
-    final h = r.value.height.toDouble();
-    if (w > 0 && h > 0 && _videoSize != Size(w, h)) {
-      setState(() => _videoSize = Size(w, h));
-    }
-  }
-
   // ---- touch input: normalize against actual video render rect ----
 
   /// Where the video actually renders inside the container (objectFit: contain).
-  Rect _videoRect(Size container) {
-    if (_videoSize.isEmpty || container.isEmpty) return Offset.zero & container;
+  Rect _videoRect(Size container, Size videoFrame) {
+    if (videoFrame.isEmpty || container.isEmpty) return Offset.zero & container;
     final containerAspect = container.width / container.height;
-    final videoAspect = _videoSize.width / _videoSize.height;
+    final videoAspect = videoFrame.width / videoFrame.height;
     double rw, rh;
     if (videoAspect > containerAspect) {
       rw = container.width;
@@ -104,7 +87,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   Offset _normalize(Offset local) {
-    final vr = _videoRect(_containerSize);
+    final videoFrame = _services?.session.captureSize ?? Size.zero;
+    final vr = _videoRect(_containerSize, videoFrame);
     if (vr.isEmpty) return Offset.zero;
     return Offset(
       ((local.dx - vr.left) / vr.width).clamp(0.0, 1.0),
@@ -357,8 +341,22 @@ class _ViewerScreenState extends State<ViewerScreen> {
   void _sendTextMessage() {
     final text = _textController.text.trim();
     if (text.isEmpty || _services == null) return;
-    _services!.session.sendText(text);
+    _services!.session.sendChatMessage(text);
     _textController.clear();
+  }
+
+  Future<void> _attachAndSend() async {
+    final result = await FilePicker.platform.pickFiles();
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) return;
+    await _services!.session.sendFileToPhone(path);
+  }
+
+  void _openFile(String path) {
+    try {
+      Process.run('cmd', ['/c', 'start', '', path]);
+    } catch (_) {}
   }
 
   // ---- build --------------------------------------------------------------------
@@ -377,7 +375,16 @@ class _ViewerScreenState extends State<ViewerScreen> {
       _notify('Clipboard sent: ${text.length > 50 ? '${text.substring(0, 50)}...' : text}');
     };
     session.onFileReceived = (name, path) {
-      _notify('File received: $name');
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('File received: $name'),
+        action: SnackBarAction(
+          label: 'Open',
+          textColor: Colors.blueAccent,
+          onPressed: () => _openFile(path),
+        ),
+        duration: const Duration(seconds: 5),
+      ));
     };
 
     return Scaffold(
@@ -389,71 +396,88 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
           return Column(
             children: [
-              // Video area (fills remaining space)
+              // Main area: video + optional chat panel
               Expanded(
-                child: Stack(
+                child: Row(
                   children: [
-                    Positioned.fill(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          _containerSize = Size(
-                            constraints.maxWidth,
-                            constraints.maxHeight,
-                          );
-                          return Listener(
-                            onPointerDown: _onPointerDown,
-                            onPointerMove: _onPointerMove,
-                            onPointerUp: _onPointerUp,
-                            onPointerCancel: (_) => _dragStart = null,
-                            onPointerSignal: (e) {
-                              if (e is PointerScrollEvent && session.isStreaming) {
-                                session.sendScroll(e.scrollDelta.dx, e.scrollDelta.dy);
-                              }
-                            },
-                            child: RepaintBoundary(
-                              key: _boundaryKey,
-                              child: streaming
-                                  ? _VideoView(session: session)
-                                  : _NoStreamPlaceholder(error: session.error),
+                    // Video area
+                    Expanded(
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                _containerSize = Size(
+                                  constraints.maxWidth,
+                                  constraints.maxHeight,
+                                );
+                                return Listener(
+                                  onPointerDown: _onPointerDown,
+                                  onPointerMove: _onPointerMove,
+                                  onPointerUp: _onPointerUp,
+                                  onPointerCancel: (_) => _dragStart = null,
+                                  onPointerSignal: (e) {
+                                    if (e is PointerScrollEvent && session.isStreaming) {
+                                      session.sendScroll(e.scrollDelta.dx, e.scrollDelta.dy);
+                                    }
+                                  },
+                                  child: RepaintBoundary(
+                                    key: _boundaryKey,
+                                    child: streaming
+                                        ? _VideoView(session: session)
+                                        : _NoStreamPlaceholder(error: session.error),
+                                  ),
+                                );
+                              },
                             ),
-                          );
-                        },
-                      ),
-                    ),
-                    _Toolbar(
-                      streaming: streaming,
-                      recording: _recording,
-                      fullscreen: _fullscreen,
-                      onBack: () => session.sendSysButton('back'),
-                      onHome: () => session.sendSysButton('home'),
-                      onRecents: () => session.sendSysButton('recents'),
-                      onVolumeUp: () => session.sendVolume('up'),
-                      onVolumeDown: () => session.sendVolume('down'),
-                      onPlayPause: () => session.sendMedia('play'),
-                      onScreenshot: _takeScreenshot,
-                      onRecord: _toggleRecording,
-                      onSendFile: _sendFile,
-                      onFullscreen: _toggleFullscreen,
-                      onClose: () => Navigator.of(context).pop(),
-                    ),
-                    if (streaming)
-                      Positioned(
-                        left: 8,
-                        bottom: 8,
-                        child: Text(
-                          '${session.fps} fps · ${(session.bps / 1000).round()} kbps',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 12,
                           ),
-                        ),
+                          _Toolbar(
+                            streaming: streaming,
+                            recording: _recording,
+                            fullscreen: _fullscreen,
+                            chatOpen: _showChat,
+                            onBack: () => session.sendSysButton('back'),
+                            onHome: () => session.sendSysButton('home'),
+                            onRecents: () => session.sendSysButton('recents'),
+                            onVolumeUp: () => session.sendVolume('up'),
+                            onVolumeDown: () => session.sendVolume('down'),
+                            onPlayPause: () => session.sendMedia('play'),
+                            onScreenshot: _takeScreenshot,
+                            onRecord: _toggleRecording,
+                            onSendFile: _sendFile,
+                            onFullscreen: _toggleFullscreen,
+                            onChat: () => setState(() => _showChat = !_showChat),
+                            onClose: () => Navigator.of(context).pop(),
+                          ),
+                          if (streaming)
+                            Positioned(
+                              left: 8,
+                              bottom: 8,
+                              child: Text(
+                                '${session.fps} fps · ${(session.bps / 1000).round()} kbps',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          if (streaming && session.transfers.isNotEmpty)
+                            Positioned(
+                              right: 8,
+                              bottom: 8,
+                              child: _TransferOverlay(transfers: session.transfers),
+                            ),
+                        ],
                       ),
-                    // File transfer progress indicator
-                    if (streaming && session.transfers.isNotEmpty)
-                      Positioned(
-                        right: 8,
-                        bottom: 8,
-                        child: _TransferOverlay(transfers: session.transfers),
+                    ),
+                    // Chat side panel
+                    if (_showChat)
+                      SizedBox(
+                        width: 320,
+                        child: _ChatPanel(
+                          messages: session.messages,
+                          onOpenFile: _openFile,
+                        ),
                       ),
                   ],
                 ),
@@ -464,6 +488,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
                   controller: _textController,
                   focusNode: _textFocusNode,
                   onSend: _sendTextMessage,
+                  onAttach: _attachAndSend,
                 ),
             ],
           );
@@ -562,11 +587,13 @@ class _TextInputBar extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.onSend,
+    required this.onAttach,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final VoidCallback onSend;
+  final VoidCallback onAttach;
 
   @override
   Widget build(BuildContext context) {
@@ -575,15 +602,21 @@ class _TextInputBar extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       child: Row(
         children: [
-          const Icon(Icons.keyboard, color: Colors.white54, size: 20),
-          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.attach_file, color: Colors.white54, size: 20),
+            tooltip: 'Send file',
+            onPressed: onAttach,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          ),
+          const SizedBox(width: 4),
           Expanded(
             child: TextField(
               controller: controller,
               focusNode: focusNode,
               style: const TextStyle(color: Colors.white, fontSize: 13),
               decoration: InputDecoration(
-                hintText: 'Type text to send to phone…',
+                hintText: 'Type message or text to send…',
                 hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
                 border: InputBorder.none,
                 isDense: true,
@@ -598,7 +631,7 @@ class _TextInputBar extends StatelessWidget {
           const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.send, color: Colors.blueAccent, size: 20),
-            tooltip: 'Send text (Enter)',
+            tooltip: 'Send',
             onPressed: onSend,
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -609,11 +642,240 @@ class _TextInputBar extends StatelessWidget {
   }
 }
 
+/// Chat side panel showing text messages, file transfers, and images.
+class _ChatPanel extends StatelessWidget {
+  const _ChatPanel({required this.messages, required this.onOpenFile});
+
+  final List<ChatMessage> messages;
+  final void Function(String path) onOpenFile;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFF1A1A2E),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            color: const Color(0xFF16213E),
+            child: const Row(
+              children: [
+                Icon(Icons.chat, color: Colors.white70, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  'Chat',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Messages
+          Expanded(
+            child: messages.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No messages yet',
+                      style: TextStyle(color: Colors.white38, fontSize: 12),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.all(8),
+                    itemCount: messages.length,
+                    itemBuilder: (context, index) {
+                      final msg = messages[messages.length - 1 - index];
+                      return _ChatBubble(msg: msg, onOpenFile: onOpenFile);
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChatBubble extends StatelessWidget {
+  const _ChatBubble({required this.msg, required this.onOpenFile});
+
+  final ChatMessage msg;
+  final void Function(String path) onOpenFile;
+
+  @override
+  Widget build(BuildContext context) {
+    final timeStr =
+        '${msg.time.hour.toString().padLeft(2, '0')}:${msg.time.minute.toString().padLeft(2, '0')}';
+    final align = msg.fromMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final bgColor = msg.fromMe
+        ? const Color(0xFF0D47A1)
+        : const Color(0xFF2C2C3E);
+    final radius = msg.fromMe
+        ? const BorderRadius.only(
+            topLeft: Radius.circular(12),
+            topRight: Radius.circular(12),
+            bottomLeft: Radius.circular(12),
+          )
+        : const BorderRadius.only(
+            topLeft: Radius.circular(12),
+            topRight: Radius.circular(12),
+            bottomRight: Radius.circular(12),
+          );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Column(
+        crossAxisAlignment: align,
+        children: [
+          Container(
+            constraints: const BoxConstraints(maxWidth: 260),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: radius,
+            ),
+            child: _buildContent(context),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            timeStr,
+            style: const TextStyle(color: Colors.white30, fontSize: 9),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    switch (msg.type) {
+      case ChatMessageType.text:
+        return Text(
+          msg.text,
+          style: const TextStyle(color: Colors.white, fontSize: 13),
+        );
+      case ChatMessageType.file:
+      case ChatMessageType.image:
+        final isImage = msg.type == ChatMessageType.image ||
+            (msg.fileName.isNotEmpty &&
+                _isImageExt(msg.fileName));
+        if (isImage && msg.filePath.isNotEmpty) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: GestureDetector(
+                  onTap: () => onOpenFile(msg.filePath),
+                  child: Image.file(
+                    File(msg.filePath),
+                    width: 180,
+                    height: 120,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      width: 180,
+                      height: 60,
+                      color: Colors.white12,
+                      child: const Icon(Icons.broken_image, color: Colors.white38),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                msg.text,
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+              ),
+            ],
+          );
+        }
+        // File message
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _fileIcon(msg.fileName),
+                  color: Colors.white70,
+                  size: 18,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    msg.fileName.isNotEmpty ? msg.fileName : msg.text,
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            if (msg.fileSize > 0) ...[
+              const SizedBox(height: 4),
+              LinearProgressIndicator(
+                value: msg.fraction,
+                backgroundColor: Colors.white24,
+                color: msg.fileDone ? Colors.greenAccent : Colors.blueAccent,
+                minHeight: 3,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                msg.fileDone
+                    ? 'Done · ${_fmtSize(msg.fileSize)}'
+                    : '${_fmtSize(msg.fileProgress)} / ${_fmtSize(msg.fileSize)}',
+                style: const TextStyle(color: Colors.white54, fontSize: 10),
+              ),
+            ],
+            if (msg.fileDone && msg.filePath.isNotEmpty)
+              GestureDetector(
+                onTap: () => onOpenFile(msg.filePath),
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Text(
+                    'Open file',
+                    style: TextStyle(
+                      color: Colors.blueAccent,
+                      fontSize: 11,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+    }
+  }
+
+  static bool _isImageExt(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    return {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(ext);
+  }
+
+  static IconData _fileIcon(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    if ({'jpg', 'jpeg', 'png', 'gif', 'webp'}.contains(ext)) return Icons.image;
+    if ({'mp4', 'mkv', 'avi', 'mov', 'webm'}.contains(ext)) return Icons.video_file;
+    if ({'mp3', 'wav', 'ogg', 'aac'}.contains(ext)) return Icons.audio_file;
+    if (ext == 'pdf') return Icons.picture_as_pdf;
+    if (ext == 'apk') return Icons.android;
+    return Icons.insert_drive_file;
+  }
+
+  static String _fmtSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
 class _Toolbar extends StatelessWidget {
   const _Toolbar({
     required this.streaming,
     required this.recording,
     required this.fullscreen,
+    required this.chatOpen,
     required this.onBack,
     required this.onHome,
     required this.onRecents,
@@ -624,12 +886,14 @@ class _Toolbar extends StatelessWidget {
     required this.onRecord,
     required this.onSendFile,
     required this.onFullscreen,
+    required this.onChat,
     required this.onClose,
   });
 
   final bool streaming;
   final bool recording;
   final bool fullscreen;
+  final bool chatOpen;
   final VoidCallback onBack;
   final VoidCallback onHome;
   final VoidCallback onRecents;
@@ -640,17 +904,18 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback onRecord;
   final VoidCallback onSendFile;
   final VoidCallback onFullscreen;
+  final VoidCallback onChat;
   final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    Widget iconButton(IconData icon, VoidCallback onTap, {String? tooltip}) {
+    Widget iconButton(IconData icon, VoidCallback onTap, {String? tooltip, bool highlighted = false}) {
       return IconButton(
-        icon: Icon(icon, color: Colors.white),
+        icon: Icon(icon, color: highlighted ? Colors.blueAccent : Colors.white),
         tooltip: tooltip,
         onPressed: streaming ? onTap : null,
         style: IconButton.styleFrom(
-          backgroundColor: Colors.black38,
+          backgroundColor: highlighted ? Colors.blueAccent.withAlpha(40) : Colors.black38,
         ),
       );
     }
@@ -683,6 +948,8 @@ class _Toolbar extends StatelessWidget {
               tooltip: recording ? 'Stop recording (Ctrl+R)' : 'Record (Ctrl+R)',
               onPressed: onRecord,
             ),
+            iconButton(Icons.chat_bubble_outline, onChat,
+                tooltip: 'Chat', highlighted: chatOpen),
             iconButton(Icons.upload_file, onSendFile, tooltip: 'Send file to phone'),
             IconButton(
               icon: Icon(
