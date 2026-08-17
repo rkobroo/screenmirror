@@ -161,7 +161,7 @@ class RtcEngine(
             peer.senders.firstOrNull { it.track?.kind() == "video" }?.let { sender ->
                 val params = sender.parameters
                 if (params.encodings.isNotEmpty()) {
-                    params.encodings[0].maxBitrate = config.bitrate / 1000  // kbps
+                    params.encodings[0].maxBitrateBps = config.bitrate.toLong()
                     sender.parameters = params
                 }
             }
