@@ -30,7 +30,7 @@ class _SplashScreenState extends State<SplashScreen> {
     } catch (_) {
       // Device info is non-critical; fall back to generic strings.
     }
-    await Future.delayed(const Duration(milliseconds: 900));
+    await Future.delayed(const Duration(milliseconds: 400));
     if (!mounted) return;
     Navigator.of(context).pushReplacementNamed(HomeScreen.route);
   }
