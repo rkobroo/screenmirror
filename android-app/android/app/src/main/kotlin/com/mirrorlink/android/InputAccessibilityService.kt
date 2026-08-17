@@ -179,20 +179,28 @@ class InputAccessibilityService : AccessibilityService() {
     }
 
     private fun injectKey(code: Int, action: Int) {
-        // AccessibilityService has no public API to inject arbitrary key
-        // events, so route the keys we can actually synthesize.
+        if (action != KeyEvent.ACTION_DOWN) return
         when (code) {
             KeyEvent.KEYCODE_BACK -> performGlobalAction(GLOBAL_ACTION_BACK)
             KeyEvent.KEYCODE_HOME -> performGlobalAction(GLOBAL_ACTION_HOME)
             KeyEvent.KEYCODE_APP_SWITCH -> performGlobalAction(GLOBAL_ACTION_RECENTS)
             KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_VOLUME_MUTE ->
-                if (action == KeyEvent.ACTION_DOWN) injectVolume(code)
+                injectVolume(code)
             KeyEvent.KEYCODE_MEDIA_PLAY,
             KeyEvent.KEYCODE_MEDIA_PAUSE,
             KeyEvent.KEYCODE_MEDIA_NEXT,
             KeyEvent.KEYCODE_MEDIA_PREVIOUS,
             -> dispatchMediaKey(code, action)
-            else -> Unit
+            // Keys that AccessibilityService can't inject as key events —
+            // fall back to text injection via clipboard+paste.
+            KeyEvent.KEYCODE_SPACE -> injectText(" ")
+            KeyEvent.KEYCODE_ENTER -> injectText("\n")
+            KeyEvent.KEYCODE_TAB -> injectText("\t")
+            KeyEvent.KEYCODE_DEL -> performGlobalAction(GLOBAL_ACTION_BACK)
+            else -> {
+                // For letter/digit keys, the PC sends them as text already.
+                // This path is reached only for unmapped key codes.
+            }
         }
     }
 

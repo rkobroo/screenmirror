@@ -96,6 +96,7 @@ class RtcEngine(
         val size: Long,
         var received: Long = 0,
         var output: java.io.OutputStream? = null,
+        var uri: android.net.Uri? = null,
     )
 
     private val incomingFiles = ConcurrentHashMap<String, IncomingFile>()
@@ -108,7 +109,7 @@ class RtcEngine(
         private const val CONTROL = "control"
         private const val FILES = "files"
         private const val CHUNK_SIZE = 64 * 1024
-        private const val MIN_CAPTURE_HEIGHT = 240
+        private const val MIN_CAPTURE_HEIGHT = 480
         private const val TAG = "MirrorLinkRtc"
 
         private var initialized = false
@@ -623,6 +624,13 @@ class RtcEngine(
                     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     manager.setPrimaryClip(ClipData.newPlainText("mirrorlink", t))
                     callback.onClipboard(t)
+                    mainHandler.post {
+                        android.widget.Toast.makeText(
+                            context,
+                            "Clipboard synced: ${t.take(60)}${if (t.length > 60) "…" else ""}",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
                 }
             }
             "ping" -> sendControl("""{"type":"pong"}""")
@@ -679,8 +687,26 @@ class RtcEngine(
                 output.flush()
                 output.close()
                 file.output = null
+                val uri = file.uri
                 incomingFiles.remove(id)
                 callback.onFileDone(id, file.name)
+                // Open the received file and show a toast.
+                if (uri != null) {
+                    mainHandler.post {
+                        try {
+                            val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, android.content.ContentResolver.SCHEME_CONTENT)
+                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(android.content.Intent.createChooser(openIntent, "Open ${file.name}"))
+                        } catch (_: Exception) {}
+                        android.widget.Toast.makeText(
+                            context,
+                            "File received: ${file.name}",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
             }
         } catch (_: Exception) {
             incomingFiles.remove(id)?.output?.close()
@@ -688,9 +714,12 @@ class RtcEngine(
     }
 
     private fun openMediaStoreOutput(file: IncomingFile, id: String): java.io.OutputStream? {
+        val mime = android.webkit.MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(file.name.substringAfterLast('.', '').lowercase())
+            ?: "application/octet-stream"
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
-            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
             if (android.os.Build.VERSION.SDK_INT >= 29) {
                 put(
                     android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
@@ -703,6 +732,7 @@ class RtcEngine(
             val uri = resolver.insert(
                 android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values,
             ) ?: return null
+            file.uri = uri
             file.output = resolver.openOutputStream(uri)
             file.output
         } catch (_: Exception) {

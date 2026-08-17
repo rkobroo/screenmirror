@@ -146,16 +146,20 @@ class SessionManager extends ChangeNotifier {
     await _setRemoteOffer(pc, sdp);
 
     _log('negotiate: createAnswer...');
-    final answer = await pc.createAnswer({'offerToReceiveVideo': true});
-    _log('negotiate: createAnswer ok len=${answer.sdp?.length}');
+    var sdpText = (await pc.createAnswer({'offerToReceiveVideo': true})).sdp ?? '';
+    _log('negotiate: createAnswer ok len=${sdpText.length}');
 
+    // Inject bitrate hint so the phone encoder respects it.
+    final bitrateKbps = (settings.app.quality.height >= 1080 ? 8000 :
+        settings.app.quality.height >= 720 ? 4000 : 2000);
+    sdpText = _injectBitrate(sdpText, bitrateKbps);
+
+    final answer = RTCSessionDescription(sdpText, 'answer');
     _log('negotiate: setLocalDescription...');
     await pc.setLocalDescription(answer);
     _log('negotiate: setLocalDescription ok');
 
-    _log('answer sdp: ${answer.sdp?.replaceAll(RegExp(r'\r\n'), ' | ').replaceAll('\n', ' / ')}');
-
-    _sendToPhone(session, {'t': 'answer', 'sdp': answer.sdp ?? ''});
+    _sendToPhone(session, {'t': 'answer', 'sdp': sdpText});
     _log('negotiate: answer sent to $session');
   }
 
@@ -376,11 +380,14 @@ class SessionManager extends ChangeNotifier {
   Future<void> sendClipboard(String text) async {
     if (!isStreaming || text.isEmpty) return;
     _sendControl({'type': 'clipboard', 'text': text});
+    onClipboardSent?.call(text);
   }
 
   /// Set when the phone pushes clipboard text to the PC (used to suppress the
   /// PC→phone echo loop in the clipboard watcher).
   void Function(String text)? onIncomingClipboard;
+  void Function(String text)? onClipboardSent;
+  void Function(String name, String path)? onFileReceived;
 
   // ---- remote input (PC → phone) ---------------------------------------------
 
@@ -420,6 +427,7 @@ class SessionManager extends ChangeNotifier {
     final name = file.uri.pathSegments.last;
 
     _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'to'));
+    notifyListeners();
 
     _sendControl({
       'type': 'file',
@@ -427,7 +435,7 @@ class SessionManager extends ChangeNotifier {
       'id': id,
       'name': name,
       'size': size,
-      'mime': 'application/octet-stream',
+      'mime': _mimeFromExtension(name),
     });
 
     final header = ByteData(24);
@@ -468,6 +476,8 @@ class SessionManager extends ChangeNotifier {
         if (file != null) {
           file.sink.close();
           _updateTransfer(id, done: true, path: file.path);
+          _log('file received: ${file.path}');
+          onFileReceived?.call(file.name, file.path);
         }
         break;
       case 'error':
@@ -542,12 +552,44 @@ class SessionManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  String _mimeFromExtension(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    return switch (ext) {
+      'jpg' || 'jpeg' => 'image/jpeg',
+      'png' => 'image/png',
+      'gif' => 'image/gif',
+      'webp' => 'image/webp',
+      'mp4' => 'video/mp4',
+      'mkv' => 'video/x-matroska',
+      'avi' => 'video/x-msvideo',
+      'mov' => 'video/quicktime',
+      'webm' => 'video/webm',
+      'mp3' => 'audio/mpeg',
+      'wav' => 'audio/wav',
+      'ogg' => 'audio/ogg',
+      'pdf' => 'application/pdf',
+      'apk' => 'application/vnd.android.package-archive',
+      'zip' => 'application/zip',
+      'txt' => 'text/plain',
+      'html' => 'text/html',
+      'json' => 'application/json',
+      _ => 'application/octet-stream',
+    };
+  }
+
   void _sendControl(Map<String, dynamic> json) {
     _control?.send(RTCDataChannelMessage(jsonEncode(json)));
   }
 
   void _sendToPhone(String session, Map<String, dynamic> json) {
     _server?.sendJson(session, json);
+  }
+
+  String _injectBitrate(String sdp, int kbps) {
+    return sdp.replaceFirstMapped(
+      RegExp(r'(m=video\s+\d+\s+[^\r\n]+)'),
+      (m) => '${m.group(0)}\r\nb=AS:$kbps',
+    );
   }
 
   void _setState(HostState next) {

@@ -310,6 +310,17 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _services = services;
     final session = services.session;
 
+    // Wire up clipboard notifications (safe to reassign).
+    session.onIncomingClipboard = (text) {
+      _notify('Clipboard received from phone: ${text.length > 50 ? '${text.substring(0, 50)}...' : text}');
+    };
+    session.onClipboardSent = (text) {
+      _notify('Clipboard sent to phone: ${text.length > 50 ? '${text.substring(0, 50)}...' : text}');
+    };
+    session.onFileReceived = (name, path) {
+      _notify('File received: $name — saved to $path');
+    };
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: AnimatedBuilder(
