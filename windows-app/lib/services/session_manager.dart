@@ -487,14 +487,16 @@ class SessionManager extends ChangeNotifier {
 
   /// Send a chat text message and add it to the local message list.
   void sendChatMessage(String text) {
-    if (_control == null || text.isEmpty) return;
-    _sendControl({'type': 'chat', 'text': text});
+    if (text.isEmpty) return;
     _messages.add(ChatMessage(
       text: text,
       fromMe: true,
       time: DateTime.now(),
     ));
     notifyListeners();
+    if (_control != null) {
+      _sendControl({'type': 'chat', 'text': text});
+    }
   }
 
   void sendSysButton(String button) =>

@@ -331,7 +331,11 @@ class _ChatCardState extends State<_ChatCard> {
   }
 
   Future<void> _pickAndSendImage() async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.image);
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowCompression: false, // skip compressImage() — it writes to scoped
+      // storage and throws IOException Permission denied on Android 10+
+    );
     if (result == null || result.files.isEmpty) return;
     final f = result.files.single;
     final path = f.path;

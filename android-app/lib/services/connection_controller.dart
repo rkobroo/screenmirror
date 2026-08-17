@@ -278,11 +278,13 @@ class ConnectionController extends ChangeNotifier {
 
   /// Send a chat message to the PC.
   void sendChatMessage(String text) {
-    if (text.isEmpty || !isStreaming) return;
-    final json = '{"type":"chat","text":"${text.replaceAll('"', '\\"')}"}';
-    bridge.sendData('control', json);
+    if (text.isEmpty) return;
     _messages.add(ChatMessage(text: text, fromMe: true, time: DateTime.now()));
     notifyListeners();
+    if (isStreaming) {
+      final json = '{"type":"chat","text":"${text.replaceAll('"', '\\"')}"}';
+      bridge.sendData('control', json);
+    }
   }
 
   // ---- misc ----------------------------------------------------------------
