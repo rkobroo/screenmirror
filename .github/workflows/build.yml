@@ -119,7 +119,14 @@ jobs:
 
       - name: Build release EXE
         working-directory: windows-app
-        run: flutter build windows --release
+        shell: pwsh
+        run: |
+          flutter build windows --release 2>&1 | Out-File build.log -Encoding utf8
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "=== BUILD FAILED ==="
+            Get-Content build.log
+            exit $LASTEXITCODE
+          }
 
       - name: Code-sign the EXE (if certificate configured)
         env:
