@@ -87,7 +87,13 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   Offset _normalize(Offset local) {
-    final videoFrame = _services?.session.captureSize ?? Size.zero;
+    // Use actual renderer dimensions (encoder may differ from captureSize).
+    final r = _services?.session.renderer;
+    final rw = r?.videoWidth.toDouble() ?? 0;
+    final rh = r?.videoHeight.toDouble() ?? 0;
+    final videoFrame = (rw > 0 && rh > 0)
+        ? Size(rw, rh)
+        : (_services?.session.captureSize ?? Size.zero);
     final vr = _videoRect(_containerSize, videoFrame);
     if (vr.isEmpty) return Offset.zero;
     return Offset(

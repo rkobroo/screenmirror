@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import '../app_services.dart';
 import '../models/device.dart';
+import '../services/session_manager.dart';
 import 'settings_screen.dart';
 import 'viewer_screen.dart';
 
@@ -73,6 +75,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 16),
               _SessionCard(services: services),
+              const SizedBox(height: 16),
+              _ChatCard(services: services),
               const SizedBox(height: 16),
               _TransfersCard(services: services),
               const SizedBox(height: 16),
@@ -326,6 +330,326 @@ class _TransfersCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _ChatCard extends StatefulWidget {
+  const _ChatCard({required this.services});
+
+  final AppServices services;
+
+  @override
+  State<_ChatCard> createState() => _ChatCardState();
+}
+
+class _ChatCardState extends State<_ChatCard> {
+  final _textCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+
+  @override
+  void dispose() {
+    _textCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final text = _textCtrl.text.trim();
+    if (text.isEmpty) return;
+    widget.services.session.sendChatMessage(text);
+    _textCtrl.clear();
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+      }
+    });
+  }
+
+  void _openFile(String path) {
+    if (Platform.isWindows) {
+      Process.run('cmd', ['/c', 'start', '', path]);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final messages = widget.services.session.messages;
+    final connected = widget.services.session.device != null;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.chat_bubble_outline, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Text('Chat',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600)),
+                const Spacer(),
+                if (messages.isNotEmpty)
+                  Text('${messages.length} messages',
+                      style: theme.textTheme.bodySmall
+                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (!connected)
+              Text('Connect a phone to start chatting.',
+                  style: theme.textTheme.bodyMedium)
+            else ...[
+              // Message list
+              Container(
+                height: 220,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surfaceContainerHighest.withAlpha(80),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: messages.isEmpty
+                    ? const Center(
+                        child: Text(
+                          'No messages yet. Say hello!',
+                          style: TextStyle(color: Colors.white38, fontSize: 13),
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scrollCtrl,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        itemCount: messages.length,
+                        itemBuilder: (context, index) {
+                          final msg = messages[index];
+                          return _DashboardChatBubble(
+                            msg: msg,
+                            onOpenFile: _openFile,
+                          );
+                        },
+                      ),
+              ),
+              const SizedBox(height: 10),
+              // Text input row
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _textCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Type a message...',
+                        hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onSubmitted: (_) => _send(),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: _send,
+                    icon: Icon(Icons.send, color: theme.colorScheme.primary),
+                    tooltip: 'Send',
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardChatBubble extends StatelessWidget {
+  const _DashboardChatBubble({required this.msg, required this.onOpenFile});
+
+  final ChatMessage msg;
+  final void Function(String path) onOpenFile;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final align = msg.fromMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final bgColor = msg.fromMe
+        ? theme.colorScheme.primary
+        : theme.colorScheme.surfaceContainerHighest;
+    final textColor = msg.fromMe
+        ? theme.colorScheme.onPrimary
+        : theme.colorScheme.onSurface;
+    final radius = msg.fromMe
+        ? const BorderRadius.only(
+            topLeft: Radius.circular(14),
+            topRight: Radius.circular(14),
+            bottomLeft: Radius.circular(14),
+            bottomRight: Radius.circular(4),
+          )
+        : const BorderRadius.only(
+            topLeft: Radius.circular(14),
+            topRight: Radius.circular(14),
+            bottomLeft: Radius.circular(4),
+            bottomRight: Radius.circular(14),
+          );
+
+    final timeStr =
+        '${msg.time.hour.toString().padLeft(2, '0')}:${msg.time.minute.toString().padLeft(2, '0')}';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Column(
+        crossAxisAlignment: align,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            constraints: const BoxConstraints(maxWidth: 320),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: radius,
+            ),
+            child: _buildContent(context, textColor),
+          ),
+          const SizedBox(height: 2),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              '${msg.fromMe ? "You" : "Phone"} · $timeStr',
+              style: TextStyle(color: Colors.white38, fontSize: 10),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContent(BuildContext context, Color textColor) {
+    if (msg.type == ChatMessageType.text) {
+      return Text(
+        msg.text,
+        style: TextStyle(color: textColor, fontSize: 13),
+      );
+    }
+
+    // File / image
+    final isImage = msg.type == ChatMessageType.image ||
+        (msg.fileName.isNotEmpty && _isImageExt(msg.fileName));
+
+    if (isImage && msg.filePath.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: GestureDetector(
+              onTap: () => _openFile(msg.filePath),
+              child: Image.file(
+                File(msg.filePath),
+                width: 200,
+                height: 130,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(
+                  width: 200,
+                  height: 60,
+                  color: Colors.white12,
+                  child: const Icon(Icons.broken_image, color: Colors.white38),
+                ),
+              ),
+            ),
+          ),
+          if (msg.text.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(msg.text, style: TextStyle(color: textColor, fontSize: 11)),
+          ],
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(_fileIcon(msg.fileName), color: textColor.withAlpha(180), size: 18),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                msg.fileName.isNotEmpty ? msg.fileName : msg.text,
+                style: TextStyle(color: textColor, fontSize: 12),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        if (msg.fileSize > 0) ...[
+          const SizedBox(height: 4),
+          LinearProgressIndicator(
+            value: msg.fraction,
+            backgroundColor: Colors.white24,
+            color: msg.fileDone ? Colors.greenAccent : Colors.blueAccent,
+            minHeight: 3,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            msg.fileDone
+                ? 'Done · ${_fmtSize(msg.fileSize)}'
+                : '${_fmtSize(msg.fileProgress)} / ${_fmtSize(msg.fileSize)}',
+            style: TextStyle(color: textColor.withAlpha(140), fontSize: 10),
+          ),
+        ],
+        if (msg.fileDone && msg.filePath.isNotEmpty)
+          GestureDetector(
+            onTap: () => _openFile(msg.filePath),
+            child: const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: Text(
+                'Open file',
+                style: TextStyle(
+                  color: Colors.blueAccent,
+                  fontSize: 11,
+                  decoration: TextDecoration.underline,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _openFile(String path) {
+    if (Platform.isWindows) {
+      Process.run('cmd', ['/c', 'start', '', path]);
+    }
+  }
+
+  static bool _isImageExt(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    return {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(ext);
+  }
+
+  static IconData _fileIcon(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    if ({'jpg', 'jpeg', 'png', 'gif', 'webp'}.contains(ext)) return Icons.image;
+    if ({'mp4', 'mkv', 'avi', 'mov', 'webm'}.contains(ext)) return Icons.video_file;
+    if ({'mp3', 'wav', 'ogg', 'aac'}.contains(ext)) return Icons.audio_file;
+    if (ext == 'pdf') return Icons.picture_as_pdf;
+    if (ext == 'apk') return Icons.android;
+    return Icons.insert_drive_file;
+  }
+
+  static String _fmtSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }
 
