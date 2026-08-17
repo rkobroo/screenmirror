@@ -350,7 +350,8 @@ class _ChatCardState extends State<_ChatCard> {
     final controller = widget.services.controller;
     final messages = controller.messages;
     final connected = controller.state == ConnectionState.streaming ||
-        controller.state == ConnectionState.negotiating;
+        controller.state == ConnectionState.negotiating ||
+        controller.state == ConnectionState.pairing;
 
     return Card(
       child: Padding(
