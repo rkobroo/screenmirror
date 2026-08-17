@@ -40,42 +40,91 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   AppServices? _services;
 
+  // ---- touch fix: track video & container dimensions ----
+  Size _containerSize = Size.zero;
+  Size _videoSize = Size.zero;
+  Timer? _videoSizePoll;
+
+  // ---- text input bar ----
+  final _textController = TextEditingController();
+  final _textFocusNode = FocusNode();
+
   @override
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_onKey);
+    _videoSizePoll = Timer.periodic(
+      const Duration(milliseconds: 500),
+      _pollVideoSize,
+    );
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
     _stopRecording();
+    _videoSizePoll?.cancel();
+    _textController.dispose();
+    _textFocusNode.dispose();
     super.dispose();
   }
 
-  // ---- input: mouse ----------------------------------------------------------
+  void _pollVideoSize(Timer _) {
+    if (!_services?.session.isStreaming ?? true) return;
+    final r = _services?.session.renderer;
+    if (r == null) return;
+    final w = r.videoWidth.toDouble();
+    final h = r.videoHeight.toDouble();
+    if (w > 0 && h > 0 && _videoSize != Size(w, h)) {
+      setState(() => _videoSize = Size(w, h));
+    }
+  }
 
-  Offset _normalize(Offset local, Size size) {
-    if (size.isEmpty) return Offset.zero;
-    return Offset(
-      (local.dx / size.width).clamp(0.0, 1.0),
-      (local.dy / size.height).clamp(0.0, 1.0),
+  // ---- touch input: normalize against actual video render rect ----
+
+  /// Where the video actually renders inside the container (objectFit: contain).
+  Rect _videoRect(Size container) {
+    if (_videoSize.isEmpty || container.isEmpty) return Offset.zero & container;
+    final containerAspect = container.width / container.height;
+    final videoAspect = _videoSize.width / _videoSize.height;
+    double rw, rh;
+    if (videoAspect > containerAspect) {
+      rw = container.width;
+      rh = container.width / videoAspect;
+    } else {
+      rh = container.height;
+      rw = container.height * videoAspect;
+    }
+    return Rect.fromLTWH(
+      (container.width - rw) / 2,
+      (container.height - rh) / 2,
+      rw,
+      rh,
     );
   }
 
-  void _onPointerDown(PointerDownEvent e, Size size) {
+  Offset _normalize(Offset local) {
+    final vr = _videoRect(_containerSize);
+    if (vr.isEmpty) return Offset.zero;
+    return Offset(
+      ((local.dx - vr.left) / vr.width).clamp(0.0, 1.0),
+      ((local.dy - vr.top) / vr.height).clamp(0.0, 1.0),
+    );
+  }
+
+  void _onPointerDown(PointerDownEvent e) {
     final services = _services!;
     if (!services.session.isStreaming) return;
-    final p = _normalize(e.localPosition, size);
+    final p = _normalize(e.localPosition);
     _dragStart = p;
     _lastDrag = p;
     services.session.sendTouch(p.dx, p.dy, 0);
   }
 
-  void _onPointerMove(PointerMoveEvent e, Size size) {
+  void _onPointerMove(PointerMoveEvent e) {
     final services = _services!;
     if (!services.session.isStreaming || _dragStart == null) return;
-    final p = _normalize(e.localPosition, size);
+    final p = _normalize(e.localPosition);
     final from = _lastDrag ?? p;
     if ((from - p).distance > 0.02) {
       services.session.sendSwipe(
@@ -89,14 +138,13 @@ class _ViewerScreenState extends State<ViewerScreen> {
     }
   }
 
-  void _onPointerUp(PointerUpEvent e, Size size) {
+  void _onPointerUp(PointerUpEvent e) {
     final services = _services!;
     if (!services.session.isStreaming) return;
-    final p = _normalize(e.localPosition, size);
+    final p = _normalize(e.localPosition);
     final start = _dragStart ?? p;
     final moved = (start - p).distance > 0.05;
     if (!moved) {
-      // Simple tap.
       services.session.sendTouch(p.dx, p.dy, 2);
     }
     _dragStart = null;
@@ -109,6 +157,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
     final services = _services;
     if (services == null || !services.session.isStreaming) return false;
     if (event is! KeyDownEvent) return false;
+
+    // Don't forward keys when the text input has focus.
+    if (_textFocusNode.hasFocus) return false;
 
     final session = services.session;
     final logical = event.logicalKey;
@@ -229,8 +280,6 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _writer = MjpegWriter(path, size.width.round(), size.height.round(), 10);
 
     _recTimer = Timer.periodic(const Duration(milliseconds: 100), (_) async {
-      // Skip if the previous frame is still being encoded — prevents async
-      // captures from stacking up on slow machines.
       if (_capturing) return;
       _capturing = true;
       try {
@@ -293,13 +342,23 @@ class _ViewerScreenState extends State<ViewerScreen> {
     if (result == null || result.files.isEmpty) return;
     final path = result.files.single.path;
     if (path == null) return;
+    final name = path.split(Platform.pathSeparator).last;
+    _notify('Sending: $name…');
     await _services!.session.sendFileToPhone(path);
+    _notify('Sent: $name');
   }
 
   Future<void> _toggleFullscreen() async {
     final next = !_fullscreen;
     await windowManager.setFullScreen(next);
     if (mounted) setState(() => _fullscreen = next);
+  }
+
+  void _sendTextMessage() {
+    final text = _textController.text.trim();
+    if (text.isEmpty || _services == null) return;
+    _services!.session.sendText(text);
+    _textController.clear();
   }
 
   // ---- build --------------------------------------------------------------------
@@ -310,15 +369,15 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _services = services;
     final session = services.session;
 
-    // Wire up clipboard notifications (safe to reassign).
+    // Wire up clipboard/file notifications (safe to reassign).
     session.onIncomingClipboard = (text) {
-      _notify('Clipboard received from phone: ${text.length > 50 ? '${text.substring(0, 50)}...' : text}');
+      _notify('Clipboard received: ${text.length > 50 ? '${text.substring(0, 50)}...' : text}');
     };
     session.onClipboardSent = (text) {
-      _notify('Clipboard sent to phone: ${text.length > 50 ? '${text.substring(0, 50)}...' : text}');
+      _notify('Clipboard sent: ${text.length > 50 ? '${text.substring(0, 50)}...' : text}');
     };
     session.onFileReceived = (name, path) {
-      _notify('File received: $name — saved to $path');
+      _notify('File received: $name');
     };
 
     return Scaffold(
@@ -328,54 +387,83 @@ class _ViewerScreenState extends State<ViewerScreen> {
         builder: (context, _) {
           final streaming = session.isStreaming;
 
-          return Stack(
+          return Column(
             children: [
-              Positioned.fill(
-                child: Listener(
-                  onPointerDown: (e) => _onPointerDown(e, _viewSize(context)),
-                  onPointerMove: (e) => _onPointerMove(e, _viewSize(context)),
-                  onPointerUp: (e) => _onPointerUp(e, _viewSize(context)),
-                  onPointerCancel: (_) => _dragStart = null,
-                  onPointerSignal: (e) {
-                    if (e is PointerScrollEvent && session.isStreaming) {
-                      session.sendScroll(e.scrollDelta.dx, e.scrollDelta.dy);
-                    }
-                  },
-                  child: RepaintBoundary(
-                    key: _boundaryKey,
-                    child: streaming
-                        ? _VideoView(session: session)
-                        : _NoStreamPlaceholder(error: session.error),
-                  ),
+              // Video area (fills remaining space)
+              Expanded(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          _containerSize = Size(
+                            constraints.maxWidth,
+                            constraints.maxHeight,
+                          );
+                          return Listener(
+                            onPointerDown: _onPointerDown,
+                            onPointerMove: _onPointerMove,
+                            onPointerUp: _onPointerUp,
+                            onPointerCancel: (_) => _dragStart = null,
+                            onPointerSignal: (e) {
+                              if (e is PointerScrollEvent && session.isStreaming) {
+                                session.sendScroll(e.scrollDelta.dx, e.scrollDelta.dy);
+                              }
+                            },
+                            child: RepaintBoundary(
+                              key: _boundaryKey,
+                              child: streaming
+                                  ? _VideoView(session: session)
+                                  : _NoStreamPlaceholder(error: session.error),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    _Toolbar(
+                      streaming: streaming,
+                      recording: _recording,
+                      fullscreen: _fullscreen,
+                      onBack: () => session.sendSysButton('back'),
+                      onHome: () => session.sendSysButton('home'),
+                      onRecents: () => session.sendSysButton('recents'),
+                      onVolumeUp: () => session.sendVolume('up'),
+                      onVolumeDown: () => session.sendVolume('down'),
+                      onPlayPause: () => session.sendMedia('play'),
+                      onScreenshot: _takeScreenshot,
+                      onRecord: _toggleRecording,
+                      onSendFile: _sendFile,
+                      onFullscreen: _toggleFullscreen,
+                      onClose: () => Navigator.of(context).pop(),
+                    ),
+                    if (streaming)
+                      Positioned(
+                        left: 8,
+                        bottom: 8,
+                        child: Text(
+                          '${session.fps} fps · ${(session.bps / 1000).round()} kbps',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    // File transfer progress indicator
+                    if (streaming && session.transfers.isNotEmpty)
+                      Positioned(
+                        right: 8,
+                        bottom: 8,
+                        child: _TransferOverlay(transfers: session.transfers),
+                      ),
+                  ],
                 ),
               ),
-              _Toolbar(
-                streaming: streaming,
-                recording: _recording,
-                fullscreen: _fullscreen,
-                onBack: () => session.sendSysButton('back'),
-                onHome: () => session.sendSysButton('home'),
-                onRecents: () => session.sendSysButton('recents'),
-                onVolumeUp: () => session.sendVolume('up'),
-                onVolumeDown: () => session.sendVolume('down'),
-                onPlayPause: () => session.sendMedia('play'),
-                onScreenshot: _takeScreenshot,
-                onRecord: _toggleRecording,
-                onSendFile: _sendFile,
-                onFullscreen: _toggleFullscreen,
-                onClose: () => Navigator.of(context).pop(),
-              ),
+              // Text input bar at the bottom
               if (streaming)
-                Positioned(
-                  left: 8,
-                  bottom: 8,
-                  child: Text(
-                    '${session.fps} fps · ${(session.bps / 1000).round()} kbps',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12,
-                    ),
-                  ),
+                _TextInputBar(
+                  controller: _textController,
+                  focusNode: _textFocusNode,
+                  onSend: _sendTextMessage,
                 ),
             ],
           );
@@ -383,9 +471,6 @@ class _ViewerScreenState extends State<ViewerScreen> {
       ),
     );
   }
-
-  Size _viewSize(BuildContext context) =>
-      MediaQuery.of(context).size;
 }
 
 class _VideoView extends StatelessWidget {
@@ -419,6 +504,104 @@ class _NoStreamPlaceholder extends StatelessWidget {
             error.isNotEmpty ? error : 'Waiting for the phone to stream…',
             style: const TextStyle(color: Colors.white70),
             textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Shows active transfer progress in the bottom-right of the viewer.
+class _TransferOverlay extends StatelessWidget {
+  const _TransferOverlay({required this.transfers});
+
+  final List<Transfer> transfers;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = transfers.where((t) => !t.done).toList();
+    if (active.isEmpty) return const SizedBox.shrink();
+    final t = active.first;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            '${t.direction == "to" ? "Sending" : "Receiving"}: ${t.name}',
+            style: const TextStyle(color: Colors.white70, fontSize: 11),
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: 160,
+            child: LinearProgressIndicator(
+              value: t.fraction,
+              backgroundColor: Colors.white24,
+              color: Colors.blueAccent,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            '${(t.fraction * 100).round()}%',
+            style: const TextStyle(color: Colors.white54, fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Bottom text input bar for sending text to the phone.
+class _TextInputBar extends StatelessWidget {
+  const _TextInputBar({
+    required this.controller,
+    required this.focusNode,
+    required this.onSend,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final VoidCallback onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.grey[900],
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.keyboard, color: Colors.white54, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: controller,
+              focusNode: focusNode,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: InputDecoration(
+                hintText: 'Type text to send to phone…',
+                hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+              ),
+              onSubmitted: (_) => onSend(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.send, color: Colors.blueAccent, size: 20),
+            tooltip: 'Send text (Enter)',
+            onPressed: onSend,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
           ),
         ],
       ),

@@ -98,27 +98,12 @@ class InputAccessibilityService : AccessibilityService() {
         val metrics = DisplayMetrics()
         (getSystemService(WINDOW_SERVICE) as WindowManager)
             .defaultDisplay.getRealMetrics(metrics)
-        val x = (normalizedX(nx, metrics) * metrics.widthPixels).toInt()
-        val y = (normalizedY(ny, metrics) * metrics.heightPixels).toInt()
+        // Normalized coords are 0..1 relative to the captured video frame.
+        // Map directly to the physical screen — no rotation correction needed
+        // because the capture is already in the current screen orientation.
+        val x = (nx * metrics.widthPixels).toInt().coerceIn(0, metrics.widthPixels - 1)
+        val y = (ny * metrics.heightPixels).toInt().coerceIn(0, metrics.heightPixels - 1)
         return x to y
-    }
-
-    private fun normalizedX(v: Double, metrics: DisplayMetrics): Double {
-        // Normalized coords are expressed against a portrait-ish phone space;
-        // map the smaller display dimension onto the normalized x axis.
-        return if (metrics.widthPixels <= metrics.heightPixels) {
-            v
-        } else {
-            v * metrics.widthPixels.toDouble() / metrics.heightPixels.toDouble()
-        }
-    }
-
-    private fun normalizedY(v: Double, metrics: DisplayMetrics): Double {
-        return if (metrics.widthPixels <= metrics.heightPixels) {
-            v
-        } else {
-            v * metrics.heightPixels.toDouble() / metrics.widthPixels.toDouble()
-        }
     }
 
     private fun injectTouch(x: Float, y: Float, action: Int) {
@@ -196,7 +181,7 @@ class InputAccessibilityService : AccessibilityService() {
             KeyEvent.KEYCODE_SPACE -> injectText(" ")
             KeyEvent.KEYCODE_ENTER -> injectText("\n")
             KeyEvent.KEYCODE_TAB -> injectText("\t")
-            KeyEvent.KEYCODE_DEL -> performGlobalAction(GLOBAL_ACTION_BACK)
+            KeyEvent.KEYCODE_DEL -> injectBackspace()
             else -> {
                 // For letter/digit keys, the PC sends them as text already.
                 // This path is reached only for unmapped key codes.
@@ -248,5 +233,20 @@ class InputAccessibilityService : AccessibilityService() {
             focused.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
         }
         focused.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+    }
+
+    /** Delete one character before the cursor. */
+    private fun injectBackspace() {
+        val root = rootInActiveWindow ?: return
+        val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
+        val cursor = focused.textSelectionEnd
+        if (cursor > 0) {
+            val args = android.os.Bundle().apply {
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor - 1)
+                putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
+            }
+            focused.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, args)
+            focused.performAction(AccessibilityNodeInfo.ACTION_CUT)
+        }
     }
 }
