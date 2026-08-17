@@ -692,10 +692,13 @@ class RtcEngine(
                 callback.onFileDone(id, file.name)
                 // Open the received file and show a toast.
                 if (uri != null) {
+                    val mime = android.webkit.MimeTypeMap.getSingleton()
+                        .getMimeTypeFromExtension(file.name.substringAfterLast('.', '').lowercase())
+                        ?: "*/*"
                     mainHandler.post {
                         try {
                             val openIntent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, android.content.ContentResolver.SCHEME_CONTENT)
+                                setDataAndType(uri, mime)
                                 addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             }
                             context.startActivity(android.content.Intent.createChooser(openIntent, "Open ${file.name}"))

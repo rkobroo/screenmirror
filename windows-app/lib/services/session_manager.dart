@@ -150,8 +150,7 @@ class SessionManager extends ChangeNotifier {
     _log('negotiate: createAnswer ok len=${sdpText.length}');
 
     // Inject bitrate hint so the phone encoder respects it.
-    final bitrateKbps = (settings.app.quality.height >= 1080 ? 8000 :
-        settings.app.quality.height >= 720 ? 4000 : 2000);
+    final bitrateKbps = 4000; // 4 Mbps default
     sdpText = _injectBitrate(sdpText, bitrateKbps);
 
     final answer = RTCSessionDescription(sdpText, 'answer');
@@ -477,7 +476,11 @@ class SessionManager extends ChangeNotifier {
           file.sink.close();
           _updateTransfer(id, done: true, path: file.path);
           _log('file received: ${file.path}');
-          onFileReceived?.call(file.name, file.path);
+          final transfer = _transfers.firstWhere(
+            (t) => t.id == id,
+            orElse: () => Transfer(id: id, name: file.path.split('\\').last, size: 0, direction: 'from'),
+          );
+          onFileReceived?.call(transfer.name, file.path);
         }
         break;
       case 'error':
