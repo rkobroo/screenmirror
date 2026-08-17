@@ -35,13 +35,15 @@ class AppServices {
       : settings = settings,
         bridge = DeviceBridge.instance,
         signaling = SignalingClient.instance,
-        discovery = DiscoveryService(),
+        discovery = _discovery,
         controller = ConnectionController(
           bridge: DeviceBridge.instance,
           signaling: SignalingClient.instance,
-          discovery: discovery,
+          discovery: _discovery,
           settings: settings,
         );
+
+  static final DiscoveryService _discovery = DiscoveryService();
 
   final SettingsService settings;
   final DeviceBridge bridge;
