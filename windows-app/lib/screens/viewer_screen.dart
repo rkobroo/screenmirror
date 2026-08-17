@@ -73,8 +73,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
     if (!_services?.session.isStreaming ?? true) return;
     final r = _services?.session.renderer;
     if (r == null) return;
-    final w = r.videoWidth.toDouble();
-    final h = r.videoHeight.toDouble();
+    final w = r.value.width.toDouble();
+    final h = r.value.height.toDouble();
     if (w > 0 && h > 0 && _videoSize != Size(w, h)) {
       setState(() => _videoSize = Size(w, h));
     }
