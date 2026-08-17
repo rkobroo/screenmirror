@@ -70,7 +70,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   void _pollVideoSize(Timer _) {
-    if (!_services?.session.isStreaming ?? true) return;
+    if (_services?.session.isStreaming != true) return;
     final r = _services?.session.renderer;
     if (r == null) return;
     final w = r.value.width.toDouble();
