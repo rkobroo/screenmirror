@@ -55,18 +55,22 @@ class _PairingScreenState extends State<PairingScreen> {
     final services = ServicesScope.of(context);
     await services.controller.connect(device, code);
     if (mounted) setState(() => _connecting = false);
-    _navigateWhenConnected(services);
+    _watchConnection(services);
   }
 
-  void _navigateWhenConnected(AppServices services) {
-    // Move home once streaming (or show the error inline).
-    Future.delayed(const Duration(seconds: 3), () {
+  void _watchConnection(AppServices services) {
+    void check() {
       if (!mounted) return;
-      if (services.controller.state == ConnectionState.streaming ||
-          services.controller.state == ConnectionState.negotiating) {
+      final s = services.controller.state;
+      if (s == ConnectionState.streaming || s == ConnectionState.negotiating) {
         Navigator.of(context).pop();
+        return;
       }
-    });
+      if (s == ConnectionState.error) return;
+      Future.delayed(const Duration(milliseconds: 500), check);
+    }
+
+    check();
   }
 
   void _showError(String message) {
