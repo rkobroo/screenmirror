@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../app_services.dart';
@@ -366,6 +367,16 @@ class _ChatCardState extends State<_ChatCard> {
     });
   }
 
+  Future<void> _pickAndSendFile() async {
+    final result = await FilePicker.platform.pickFiles();
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) return;
+    final name = result.files.single.name;
+    widget.services.session.sendChatMessage('[File: $name]');
+    await widget.services.session.sendFileToPhone(path);
+  }
+
   void _openFile(String path) {
     if (Platform.isWindows) {
       Process.run('cmd', ['/c', 'start', '', path]);
@@ -434,6 +445,11 @@ class _ChatCardState extends State<_ChatCard> {
               // Text input row
               Row(
                 children: [
+                  IconButton(
+                    onPressed: _pickAndSendFile,
+                    icon: const Icon(Icons.attach_file, size: 20),
+                    tooltip: 'Attach file',
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _textCtrl,

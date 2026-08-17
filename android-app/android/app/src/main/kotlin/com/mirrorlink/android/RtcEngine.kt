@@ -292,7 +292,7 @@ class RtcEngine(
         val target = if (channel == CONTROL) controlChannel else filesChannel
         if (target == null) return
         val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
-        target.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))
+        target.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), channel != CONTROL))
     }
 
     // ---- clipboard -----------------------------------------------------------
@@ -791,7 +791,7 @@ class RtcEngine(
 
     private fun sendControl(text: String) {
         controlChannel?.send(
-            DataChannel.Buffer(ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8)), true),
+            DataChannel.Buffer(ByteBuffer.wrap(text.toByteArray(Charsets.UTF_8)), false),
         )
     }
 

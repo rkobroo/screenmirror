@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 
 import '../app_services.dart';
@@ -327,6 +330,16 @@ class _ChatCardState extends State<_ChatCard> {
     });
   }
 
+  Future<void> _pickAndSendImage() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.image);
+    if (result == null || result.files.isEmpty) return;
+    final f = result.files.single;
+    final path = f.path;
+    if (path == null) return;
+    widget.services.controller.sendChatMessage('[Photo: ${f.name}]');
+    await widget.services.bridge.sendFile(path);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -431,6 +444,11 @@ class _ChatCardState extends State<_ChatCard> {
               const SizedBox(height: 8),
               Row(
                 children: [
+                  IconButton(
+                    onPressed: _pickAndSendImage,
+                    icon: const Icon(Icons.attach_file, size: 20),
+                    tooltip: 'Attach photo',
+                  ),
                   Expanded(
                     child: TextField(
                       controller: _textCtrl,
