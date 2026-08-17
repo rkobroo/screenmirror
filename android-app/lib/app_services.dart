@@ -39,7 +39,7 @@ class AppServices {
         controller = ConnectionController(
           bridge: DeviceBridge.instance,
           signaling: SignalingClient.instance,
-          discovery: DiscoveryService(),
+          discovery: discovery,
           settings: settings,
         );
 

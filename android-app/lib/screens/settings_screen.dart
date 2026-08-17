@@ -134,6 +134,7 @@ class SettingsScreen extends StatelessWidget {
         ],
       ),
     );
+    controller.dispose();
     if (result != null) {
       await settings.update(settings.app.copyWith(deviceNickname: result));
     }

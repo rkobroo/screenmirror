@@ -23,9 +23,12 @@ class DeviceBridge {
   /// Stream of native events (see [EventType]).
   Stream<Map<String, dynamic>> get events => _eventController.stream;
 
+  StreamSubscription<dynamic>? _eventSub;
+
   /// Start forwarding native events to Dart listeners.
   Future<void> init() async {
-    _events.receiveBroadcastStream().listen((dynamic raw) {
+    _eventSub?.cancel();
+    _eventSub = _events.receiveBroadcastStream().listen((dynamic raw) {
       if (raw is Map) {
         _eventController.add(Map<String, dynamic>.from(raw));
       }
@@ -121,6 +124,7 @@ class DeviceBridge {
       _channel.invokeMethod<void>('sendFile', {'uri': contentUri});
 
   Future<void> dispose() async {
+    await _eventSub?.cancel();
     await _eventController.close();
   }
 }

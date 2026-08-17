@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -132,8 +133,8 @@ class ConnectionController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
-    await bridge.stopSession();
-    await signaling.disconnect();
+    try { await bridge.stopSession(); } catch (_) {}
+    try { await signaling.disconnect(); } catch (_) {}
     _connectedTo = null;
     _fps = 0;
     _bps = 0;
@@ -143,7 +144,7 @@ class ConnectionController extends ChangeNotifier {
   void _onSignalEvent(Map<String, dynamic> event) {
     switch (event['type']) {
       case 'paired':
-        _onPaired();
+        _onPaired().catchError((e) => _fail('Failed to start session: $e'));
         break;
       case 'pairFailed':
         _fail('Pairing rejected by the PC.');
@@ -152,7 +153,11 @@ class ConnectionController extends ChangeNotifier {
         bridge.setRemoteAnswer(event['sdp'] as String? ?? '');
         break;
       case 'ice':
-        _handleRemoteIce(event['cand'] as Map);
+        final cand = event['cand'];
+        if (cand is Map) _handleRemoteIce(cand);
+        break;
+      case 'error':
+        _fail('Connection error: ${event['error'] ?? 'unknown'}');
         break;
       case 'closed':
         _fail('PC disconnected.');
@@ -161,32 +166,32 @@ class ConnectionController extends ChangeNotifier {
   }
 
   Future<void> _onPaired() async {
-    final s = settings.app;
-    final maxHeight = s.quality.height;
-    final bitrate = switch (s.quality) {
-      VideoQuality.low => 2000000,
-      VideoQuality.medium => 4000000,
-      VideoQuality.high => 8000000,
-    };
-    final width = (maxHeight * 16 / 9).round();
-
-    await bridge.startSession(
-      width: width,
-      height: maxHeight,
-      fps: s.fps.value,
-      bitrate: bitrate,
-      autoQuality: s.autoQuality,
-      nickname: s.deviceNickname,
-      clipboardSync: s.clipboardSync,
-    );
-
-    // The Home button becomes "Stop Mirroring" the moment ICE connects, so
-    // the projection-permission dialog would otherwise be unreachable during
-    // the normal connect flow. Request it here so capture starts alongside
-    // the mirroring session (the user can still deny to decline video).
     try {
-      await bridge.requestProjection();
-    } catch (_) {}
+      final s = settings.app;
+      final maxHeight = s.quality.height;
+      final bitrate = switch (s.quality) {
+        VideoQuality.low => 2000000,
+        VideoQuality.medium => 4000000,
+        VideoQuality.high => 8000000,
+      };
+      final width = (maxHeight * 16 / 9).round();
+
+      await bridge.startSession(
+        width: width,
+        height: maxHeight,
+        fps: s.fps.value,
+        bitrate: bitrate,
+        autoQuality: s.autoQuality,
+        nickname: s.deviceNickname,
+        clipboardSync: s.clipboardSync,
+      );
+
+      try {
+        await bridge.requestProjection();
+      } catch (_) {}
+    } catch (e) {
+      _fail('Failed to start session: $e');
+    }
   }
 
   Future<void> _handleOffer(String sdp) async {
@@ -207,7 +212,8 @@ class ConnectionController extends ChangeNotifier {
   void _onBridgeEvent(Map<String, dynamic> event) {
     switch (event['type']) {
       case EventType.state:
-        _onNativeState(event['value'] as String);
+        final value = event['value'];
+        if (value is String) _onNativeState(value);
         break;
       case EventType.offer:
         _handleOffer(event['sdp'] as String? ?? '');
@@ -282,7 +288,7 @@ class ConnectionController extends ChangeNotifier {
     _messages.add(ChatMessage(text: text, fromMe: true, time: DateTime.now()));
     notifyListeners();
     if (isStreaming) {
-      final json = '{"type":"chat","text":"${text.replaceAll('"', '\\"')}"}';
+      final json = jsonEncode({'type': 'chat', 'text': text});
       bridge.sendData('control', json);
     }
   }

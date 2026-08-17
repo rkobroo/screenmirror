@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -22,7 +20,6 @@ class PairingScreen extends StatefulWidget {
 class _PairingScreenState extends State<PairingScreen> {
   final _codeController = TextEditingController();
   final _ipController = TextEditingController();
-  StreamSubscription<NearbyDevice>? _devicesSub;
   bool _connecting = false;
 
   @override
@@ -38,7 +35,6 @@ class _PairingScreenState extends State<PairingScreen> {
 
   @override
   void dispose() {
-    _devicesSub?.cancel();
     _codeController.dispose();
     _ipController.dispose();
     super.dispose();

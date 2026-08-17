@@ -53,7 +53,7 @@ class DiscoveryService {
         ip: datagram.address.host,
         port: (json['p'] as num?)?.toInt() ?? 59661,
         accepting: (json['c'] as num?)?.toInt() != 0,
-        lastSeen: DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(0)),
+        lastSeen: Duration.zero,
       );
       _found.add(device);
     } catch (_) {
