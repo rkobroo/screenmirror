@@ -149,8 +149,11 @@ class MirrorLinkMainActivity : FlutterActivity(), RtcEngine.Callback {
     }
 
     private fun stopScreenService() {
-        val intent = Intent(this, ScreenProjectionService::class.java)
-        stopService(intent)
+        try {
+            val intent = Intent(this, ScreenProjectionService::class.java)
+                .setAction("com.mirrorlink.android.STOP_MIRRORING")
+            startService(intent)
+        } catch (_: Throwable) {}
     }
 
     // ----------------------------------------------------------- engine events
@@ -214,10 +217,11 @@ class MirrorLinkMainActivity : FlutterActivity(), RtcEngine.Callback {
     }
 
     override fun onDestroy() {
+        window.decorView.alpha = 0f
+        stopScreenService()
         engine?.stop()
         engine = null
         RtcEngineHolder.engine = null
-        stopScreenService()
         super.onDestroy()
     }
 }

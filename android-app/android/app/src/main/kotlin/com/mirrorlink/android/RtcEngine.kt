@@ -80,9 +80,6 @@ class RtcEngine(
     private var controlChannel: DataChannel? = null
     private var filesChannel: DataChannel? = null
 
-    private data class PendingSend(val channel: String, val bytes: ByteArray)
-    private val pendingSends = mutableListOf<PendingSend>()
-
     private var running = false
     private var clipboardWatcherEnabled = false
     private var clipboardListener: ClipboardManager.OnPrimaryClipChangedListener? = null
@@ -294,20 +291,16 @@ class RtcEngine(
     fun sendData(channel: String, base64Payload: String) {
         val target = if (channel == CONTROL) controlChannel else filesChannel
         if (target == null) {
-            android.util.Log.w(TAG, "sendData: $channel channel is null, queueing for retry")
-            val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
-            pendingSends.add(PendingSend(channel, bytes))
+            android.util.Log.w(TAG, "sendData: $channel channel is null, dropping")
             return
         }
-        val state = target.state()
-        android.util.Log.i(TAG, "sendData: $channel state=$state")
         val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
-        if (state != DataChannel.State.OPEN) {
-            android.util.Log.w(TAG, "sendData: $channel not OPEN ($state), queuing")
-            pendingSends.add(PendingSend(channel, bytes))
-            return
+        android.util.Log.i(TAG, "sendData: $channel state=${target.state()} len=${bytes.size}")
+        try {
+            target.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
+        } catch (e: Throwable) {
+            android.util.Log.e(TAG, "sendData: $channel send failed: ${e.message}")
         }
-        target.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
     }
 
     // ---- clipboard -----------------------------------------------------------
@@ -622,7 +615,6 @@ class RtcEngine(
             android.util.Log.i(TAG, "control channel state: ${ch.state()}")
             if (ch.state() == DataChannel.State.OPEN) {
                 callback.onDataChannelOpened("control")
-                flushPendingSends()
             }
         }
         override fun onMessage(buffer: DataChannel.Buffer?) {
@@ -831,22 +823,6 @@ class RtcEngine(
             tmp.absolutePath
         } catch (_: Exception) {
             null
-        }
-    }
-
-    private fun flushPendingSends() {
-        if (pendingSends.isEmpty()) return
-        android.util.Log.i(TAG, "flushPendingSends: ${pendingSends.size} queued messages")
-        val pending = ArrayList(pendingSends)
-        pendingSends.clear()
-        for (ps in pending) {
-            val target = if (ps.channel == CONTROL) controlChannel else filesChannel
-            if (target != null && target.state() == DataChannel.State.OPEN) {
-                target.send(DataChannel.Buffer(ByteBuffer.wrap(ps.bytes), false))
-            } else {
-                android.util.Log.w(TAG, "flushPendingSends: ${ps.channel} still not OPEN, re-queuing")
-                pendingSends.add(ps)
-            }
         }
     }
 
