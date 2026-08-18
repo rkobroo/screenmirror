@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
+import 'package:flutter/services.dart';
 
 import '../app_services.dart';
 import '../services/connection_controller.dart';
@@ -331,15 +334,13 @@ class _ChatCardState extends State<_ChatCard> {
   Future<void> _pickAndSendImage() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.image,
-      allowCompression: false, // skip compressImage() — it writes to scoped
-      // storage and throws IOException Permission denied on Android 10+
+      allowCompression: false,
     );
     if (result == null || result.files.isEmpty) return;
     final f = result.files.single;
     final path = f.path;
     if (path == null) return;
-    widget.services.controller.sendChatMessage('[Photo: ${f.name}]');
-    await widget.services.bridge.sendFile(path);
+    widget.services.controller.sendPhotoMessage(path, f.name);
   }
 
   @override
@@ -377,7 +378,7 @@ class _ChatCardState extends State<_ChatCard> {
                   style: theme.textTheme.bodySmall)
             else ...[
               Container(
-                height: 180,
+                constraints: const BoxConstraints(minHeight: 120, maxHeight: 340),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surfaceContainerHighest.withAlpha(80),
                   borderRadius: BorderRadius.circular(12),
@@ -398,46 +399,90 @@ class _ChatCardState extends State<_ChatCard> {
                           final isMe = msg.fromMe;
                           final timeStr =
                               '${msg.time.hour.toString().padLeft(2, '0')}:${msg.time.minute.toString().padLeft(2, '0')}';
-                          return Align(
-                            alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 2),
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              constraints: BoxConstraints(
-                                maxWidth: MediaQuery.of(context).size.width * 0.7,
-                              ),
-                              decoration: BoxDecoration(
-                                color: isMe
-                                    ? theme.colorScheme.primary
-                                    : theme.colorScheme.surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: isMe
-                                    ? CrossAxisAlignment.end
-                                    : CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    msg.text,
-                                    style: TextStyle(
-                                      color: isMe
-                                          ? theme.colorScheme.onPrimary
-                                          : theme.colorScheme.onSurface,
-                                      fontSize: 13,
+                          return GestureDetector(
+                            onLongPress: () {
+                              Clipboard.setData(ClipboardData(text: msg.text));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Copied to clipboard'),
+                                  duration: Duration(seconds: 1),
+                                ),
+                              );
+                            },
+                            child: Align(
+                              alignment: isMe
+                                  ? Alignment.centerRight
+                                  : Alignment.centerLeft,
+                              child: Container(
+                                margin:
+                                    const EdgeInsets.symmetric(vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 6),
+                                constraints: BoxConstraints(
+                                  maxWidth:
+                                      MediaQuery.of(context).size.width * 0.7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: isMe
+                                      ? theme.colorScheme.primary
+                                      : theme
+                                          .colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: isMe
+                                      ? CrossAxisAlignment.end
+                                      : CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (msg.type == ChatMessageType.image &&
+                                        msg.filePath.isNotEmpty)
+                                      ClipRRect(
+                                        borderRadius:
+                                            BorderRadius.circular(8),
+                                        child: Image.file(
+                                          File(msg.filePath),
+                                          width: 200,
+                                          height: 130,
+                                          fit: BoxFit.cover,
+                                          errorBuilder: (_, __, ___) =>
+                                              Container(
+                                            width: 200,
+                                            height: 60,
+                                            color: Colors.white12,
+                                            child: const Icon(
+                                                Icons.broken_image,
+                                                color: Colors.white38),
+                                          ),
+                                        ),
+                                      ),
+                                    if (msg.type == ChatMessageType.image &&
+                                        msg.filePath.isNotEmpty)
+                                      const SizedBox(height: 4),
+                                    Text(
+                                      msg.type == ChatMessageType.image
+                                          ? msg.fileName
+                                          : msg.text,
+                                      style: TextStyle(
+                                        color: isMe
+                                            ? theme.colorScheme.onPrimary
+                                            : theme.colorScheme.onSurface,
+                                        fontSize: 13,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${isMe ? "You" : "PC"} · $timeStr',
-                                    style: TextStyle(
-                                      color: isMe
-                                          ? theme.colorScheme.onPrimary.withAlpha(140)
-                                          : Colors.white38,
-                                      fontSize: 9,
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${isMe ? "You" : "PC"} · $timeStr',
+                                      style: TextStyle(
+                                        color: isMe
+                                            ? theme.colorScheme.onPrimary
+                                                .withAlpha(140)
+                                            : Colors.white38,
+                                        fontSize: 9,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
                           );
@@ -459,7 +504,7 @@ class _ChatCardState extends State<_ChatCard> {
                         style: const TextStyle(fontSize: 13),
                         decoration: InputDecoration(
                           hintText: 'Type a message...',
-                          hintStyle: TextStyle(color: Colors.white38, fontSize: 13),
+                          hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
                           filled: true,
                           fillColor: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

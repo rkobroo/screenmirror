@@ -205,8 +205,8 @@ class MirrorLinkMainActivity : FlutterActivity(), RtcEngine.Callback {
         )
     }
 
-    override fun onFileDone(id: String, name: String) {
-        emit("fileDone", mapOf("id" to id, "name" to name))
+    override fun onFileDone(id: String, name: String, filePath: String?) {
+        emit("fileDone", mapOf("id" to id, "name" to name, "filePath" to (filePath ?: "")))
     }
 
     override fun onDataChannelOpened(channel: String) {

@@ -21,16 +21,24 @@ enum ConnectionState {
   error,
 }
 
+enum ChatMessageType { text, file, image }
+
 class ChatMessage {
   const ChatMessage({
     required this.text,
     required this.fromMe,
     required this.time,
+    this.type = ChatMessageType.text,
+    this.filePath = '',
+    this.fileName = '',
   });
 
   final String text;
   final bool fromMe;
   final DateTime time;
+  final ChatMessageType type;
+  final String filePath;
+  final String fileName;
 }
 
 /// Orchestrates the phone side of a session:
@@ -238,6 +246,23 @@ class ConnectionController extends ChangeNotifier {
           notifyListeners();
         }
         break;
+      case EventType.fileDone:
+        final name = event['name'] as String? ?? 'file';
+        final filePath = event['filePath'] as String? ?? '';
+        final ext = name.split('.').last.toLowerCase();
+        if ({'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(ext) &&
+            filePath.isNotEmpty) {
+          _messages.add(ChatMessage(
+            text: '[Photo: $name]',
+            fromMe: false,
+            time: DateTime.now(),
+            type: ChatMessageType.image,
+            filePath: filePath,
+            fileName: name,
+          ));
+          notifyListeners();
+        }
+        break;
       case EventType.stats:
         _fps = (event['fps'] as num?)?.toInt() ?? 0;
         _bps = (event['bps'] as num?)?.toInt() ?? 0;
@@ -290,6 +315,24 @@ class ConnectionController extends ChangeNotifier {
     if (isStreaming) {
       final json = jsonEncode({'type': 'chat', 'text': text});
       bridge.sendData('control', json);
+    }
+  }
+
+  /// Send a photo in chat with a local thumbnail preview.
+  void sendPhotoMessage(String path, String fileName) {
+    _messages.add(ChatMessage(
+      text: '[Photo: $fileName]',
+      fromMe: true,
+      time: DateTime.now(),
+      type: ChatMessageType.image,
+      filePath: path,
+      fileName: fileName,
+    ));
+    notifyListeners();
+    if (isStreaming) {
+      final json = jsonEncode({'type': 'chat', 'text': '[Photo: $fileName]'});
+      bridge.sendData('control', json);
+      bridge.sendFile(path);
     }
   }
 

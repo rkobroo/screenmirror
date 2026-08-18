@@ -52,7 +52,7 @@ class RtcEngine(
         fun onClipboard(text: String)
         fun onChat(text: String)
         fun onFileProgress(id: String, received: Long, total: Long)
-        fun onFileDone(id: String, name: String)
+        fun onFileDone(id: String, name: String, uri: String?)
         fun onDataChannelOpened(channel: String)
     }
 
@@ -81,6 +81,8 @@ class RtcEngine(
     private var filesChannel: DataChannel? = null
 
     private var running = false
+    private var controlOpen = false
+    private val pendingControl = mutableListOf<ByteBuffer>()
     private var clipboardWatcherEnabled = false
     private var clipboardListener: ClipboardManager.OnPrimaryClipChangedListener? = null
 
@@ -292,7 +294,12 @@ class RtcEngine(
         val target = if (channel == CONTROL) controlChannel else filesChannel
         if (target == null) return
         val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
-        target.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), channel != CONTROL))
+        val buf = ByteBuffer.wrap(bytes)
+        if (channel == CONTROL && !controlOpen) {
+            pendingControl.add(buf)
+            return
+        }
+        target.send(DataChannel.Buffer(buf, channel != CONTROL))
     }
 
     // ---- clipboard -----------------------------------------------------------
@@ -444,6 +451,8 @@ class RtcEngine(
         filesChannel?.close()
         controlChannel = null
         filesChannel = null
+        controlOpen = false
+        pendingControl.clear()
 
         try {
             peer.close()
@@ -602,7 +611,20 @@ class RtcEngine(
 
     private val controlObserver = object : DataChannel.Observer {
         override fun onBufferedAmountChange(previousAmount: Long) = Unit
-        override fun onStateChange() = Unit
+        override fun onStateChange() {
+            val ch = controlChannel ?: return
+            if (ch.state() == DataChannel.State.OPEN) {
+                controlOpen = true
+                val ch2 = controlChannel ?: return
+                for (buf in pendingControl) {
+                    ch2.send(DataChannel.Buffer(buf, false))
+                }
+                pendingControl.clear()
+                callback.onDataChannelOpened("control")
+            } else if (ch.state() == DataChannel.State.CLOSING || ch.state() == DataChannel.State.CLOSED) {
+                controlOpen = false
+            }
+        }
         override fun onMessage(buffer: DataChannel.Buffer?) {
             buffer ?: return
             if (buffer.binary) return
@@ -671,7 +693,8 @@ class RtcEngine(
                         f.output?.close()
                     } catch (_: Throwable) {
                     }
-                    callback.onFileDone(id, f.name)
+                    val filePath = f.uri?.let { resolveFilePath(it) }
+                    callback.onFileDone(id, f.name, filePath)
                 }
             }
             "error" -> {
@@ -704,7 +727,8 @@ class RtcEngine(
                 file.output = null
                 val uri = file.uri
                 incomingFiles.remove(id)
-                callback.onFileDone(id, file.name)
+                val filePath = uri?.let { resolveFilePath(it) }
+                callback.onFileDone(id, file.name, filePath)
                 // Open the received file and show a toast.
                 if (uri != null) {
                     val mime = mimeFromExtension(file.name)
@@ -770,6 +794,20 @@ class RtcEngine(
             file.uri = uri
             file.output = resolver.openOutputStream(uri)
             file.output
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun resolveFilePath(uri: android.net.Uri): String? {
+        return try {
+            val cursor = context.contentResolver.query(uri, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val idx = it.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
+                    if (idx >= 0) it.getString(idx) else null
+                } else null
+            }
         } catch (_: Exception) {
             null
         }
