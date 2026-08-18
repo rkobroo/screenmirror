@@ -21,10 +21,15 @@ class _PairingScreenState extends State<PairingScreen> {
   final _ipController = TextEditingController();
   bool _connecting = false;
 
+  bool _discoveryStarted = false;
+
   @override
-  void initState() {
-    super.initState();
-    _startDiscovery();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!_discoveryStarted) {
+      _discoveryStarted = true;
+      _startDiscovery();
+    }
   }
 
   Future<void> _startDiscovery() async {
