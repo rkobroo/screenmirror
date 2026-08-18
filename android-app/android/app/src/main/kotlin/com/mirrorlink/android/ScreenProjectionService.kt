@@ -67,8 +67,11 @@ class ScreenProjectionService : Service() {
         val channel = NotificationChannel(
             CHANNEL_ID,
             "Screen mirroring",
-            NotificationManager.IMPORTANCE_LOW,
-        )
+            NotificationManager.IMPORTANCE_MIN,
+        ).apply {
+            setShowBadge(false)
+            lockscreenVisibility = Notification.VISIBILITY_SECRET
+        }
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(channel)
     }

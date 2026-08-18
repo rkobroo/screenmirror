@@ -106,16 +106,16 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   void _onPointerDown(PointerDownEvent e) {
-    final services = _services!;
-    if (!services.session.isStreaming) return;
+    final services = _services;
+    if (services == null || !services.session.isStreaming) return;
     final p = _normalize(e.localPosition);
     _dragStart = p;
     _lastDrag = p;
   }
 
   void _onPointerMove(PointerMoveEvent e) {
-    final services = _services!;
-    if (!services.session.isStreaming || _dragStart == null) return;
+    final services = _services;
+    if (services == null || !services.session.isStreaming || _dragStart == null) return;
     final p = _normalize(e.localPosition);
     final from = _lastDrag ?? p;
     if ((from - p).distance > 0.02) {
@@ -131,8 +131,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   void _onPointerUp(PointerUpEvent e) {
-    final services = _services!;
-    if (!services.session.isStreaming) return;
+    final services = _services;
+    if (services == null || !services.session.isStreaming) return;
     final p = _normalize(e.localPosition);
     final start = _dragStart ?? p;
     final moved = (start - p).distance > 0.05;
@@ -344,7 +344,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
     if (path == null) return;
     final name = path.split(Platform.pathSeparator).last;
     _notify('Sending: $name…');
-    await _services!.session.sendFileToPhone(path);
+    await _services?.session.sendFileToPhone(path);
     _notify('Sent: $name');
   }
 
@@ -388,7 +388,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
     if (result == null || result.files.isEmpty) return;
     final path = result.files.single.path;
     if (path == null) return;
-    await _services!.session.sendFileToPhone(path);
+    await _services?.session.sendFileToPhone(path);
   }
 
   void _openFile(String path) {
@@ -547,10 +547,19 @@ class _VideoView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return RTCVideoView(
-      session.renderer,
-      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
-    );
+    try {
+      return RTCVideoView(
+        session.renderer,
+        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+      );
+    } catch (e) {
+      return Center(
+        child: Text(
+          'Renderer not ready: $e',
+          style: const TextStyle(color: Colors.white54),
+        ),
+      );
+    }
   }
 }
 

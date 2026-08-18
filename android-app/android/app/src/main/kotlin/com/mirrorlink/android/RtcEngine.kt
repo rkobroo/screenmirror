@@ -80,9 +80,10 @@ class RtcEngine(
     private var controlChannel: DataChannel? = null
     private var filesChannel: DataChannel? = null
 
+    private data class PendingSend(val channel: String, val bytes: ByteArray)
+    private val pendingSends = mutableListOf<PendingSend>()
+
     private var running = false
-    private var controlOpen = false
-    private val pendingControl = mutableListOf<ByteBuffer>()
     private var clipboardWatcherEnabled = false
     private var clipboardListener: ClipboardManager.OnPrimaryClipChangedListener? = null
 
@@ -292,14 +293,21 @@ class RtcEngine(
     /** Send a UTF-8 text payload on the named data channel (phone → PC). */
     fun sendData(channel: String, base64Payload: String) {
         val target = if (channel == CONTROL) controlChannel else filesChannel
-        if (target == null) return
-        val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
-        val buf = ByteBuffer.wrap(bytes)
-        if (channel == CONTROL && !controlOpen) {
-            pendingControl.add(buf)
+        if (target == null) {
+            android.util.Log.w(TAG, "sendData: $channel channel is null, queueing for retry")
+            val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
+            pendingSends.add(PendingSend(channel, bytes))
             return
         }
-        target.send(DataChannel.Buffer(buf, channel != CONTROL))
+        val state = target.state()
+        android.util.Log.i(TAG, "sendData: $channel state=$state")
+        val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
+        if (state != DataChannel.State.OPEN) {
+            android.util.Log.w(TAG, "sendData: $channel not OPEN ($state), queuing")
+            pendingSends.add(PendingSend(channel, bytes))
+            return
+        }
+        target.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
     }
 
     // ---- clipboard -----------------------------------------------------------
@@ -451,8 +459,6 @@ class RtcEngine(
         filesChannel?.close()
         controlChannel = null
         filesChannel = null
-        controlOpen = false
-        pendingControl.clear()
 
         try {
             peer.close()
@@ -613,16 +619,10 @@ class RtcEngine(
         override fun onBufferedAmountChange(previousAmount: Long) = Unit
         override fun onStateChange() {
             val ch = controlChannel ?: return
+            android.util.Log.i(TAG, "control channel state: ${ch.state()}")
             if (ch.state() == DataChannel.State.OPEN) {
-                controlOpen = true
-                val ch2 = controlChannel ?: return
-                for (buf in pendingControl) {
-                    ch2.send(DataChannel.Buffer(buf, false))
-                }
-                pendingControl.clear()
                 callback.onDataChannelOpened("control")
-            } else if (ch.state() == DataChannel.State.CLOSING || ch.state() == DataChannel.State.CLOSED) {
-                controlOpen = false
+                flushPendingSends()
             }
         }
         override fun onMessage(buffer: DataChannel.Buffer?) {
@@ -800,16 +800,53 @@ class RtcEngine(
     }
 
     private fun resolveFilePath(uri: android.net.Uri): String? {
-        return try {
+        // First try the DATA column (works on pre-Q and some Q+ devices).
+        try {
             val cursor = context.contentResolver.query(uri, null, null, null, null)
             cursor?.use {
                 if (it.moveToFirst()) {
                     val idx = it.getColumnIndex(android.provider.MediaStore.MediaColumns.DATA)
-                    if (idx >= 0) it.getString(idx) else null
-                } else null
+                    if (idx >= 0) {
+                        val path = it.getString(idx)
+                        if (path != null && java.io.File(path).exists()) return path
+                    }
+                }
             }
+        } catch (_: Exception) {}
+        // Fallback: copy content URI to a temp file so Image.file() can read it.
+        return try {
+            val ext = when {
+                uri.toString().contains(".jpg", true) || uri.toString().contains(".jpeg", true) -> ".jpg"
+                uri.toString().contains(".png", true) -> ".png"
+                uri.toString().contains(".gif", true) -> ".gif"
+                uri.toString().contains(".webp", true) -> ".webp"
+                else -> ".tmp"
+            }
+            val tmp = java.io.File.createTempFile("mirrorlink_", ext, context.cacheDir)
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                tmp.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            tmp.absolutePath
         } catch (_: Exception) {
             null
+        }
+    }
+
+    private fun flushPendingSends() {
+        if (pendingSends.isEmpty()) return
+        android.util.Log.i(TAG, "flushPendingSends: ${pendingSends.size} queued messages")
+        val pending = ArrayList(pendingSends)
+        pendingSends.clear()
+        for (ps in pending) {
+            val target = if (ps.channel == CONTROL) controlChannel else filesChannel
+            if (target != null && target.state() == DataChannel.State.OPEN) {
+                target.send(DataChannel.Buffer(ByteBuffer.wrap(ps.bytes), false))
+            } else {
+                android.util.Log.w(TAG, "flushPendingSends: ${ps.channel} still not OPEN, re-queuing")
+                pendingSends.add(ps)
+            }
         }
     }
 
