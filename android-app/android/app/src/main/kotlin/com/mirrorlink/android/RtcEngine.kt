@@ -98,6 +98,7 @@ class RtcEngine(
         var received: Long = 0,
         var output: java.io.OutputStream? = null,
         var uri: android.net.Uri? = null,
+        var doneReceived: Boolean = false,
     )
 
     private val incomingFiles = ConcurrentHashMap<String, IncomingFile>()
@@ -295,9 +296,11 @@ class RtcEngine(
             return
         }
         val bytes = android.util.Base64.decode(base64Payload, android.util.Base64.DEFAULT)
-        android.util.Log.i(TAG, "sendData: $channel state=${target.state()} len=${bytes.size}")
+        val decodedText = try { String(bytes, Charsets.UTF_8) } catch (_: Throwable) { "<binary>" }
+        android.util.Log.i(TAG, "sendData: $channel state=${target.state()} len=${bytes.size} decoded=$decodedText")
         try {
             target.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
+            android.util.Log.i(TAG, "sendData: $channel send() returned OK")
         } catch (e: Throwable) {
             android.util.Log.e(TAG, "sendData: $channel send failed: ${e.message}")
         }
@@ -615,6 +618,7 @@ class RtcEngine(
             android.util.Log.i(TAG, "control channel state: ${ch.state()}")
             if (ch.state() == DataChannel.State.OPEN) {
                 callback.onDataChannelOpened("control")
+                callback.onState(NativeStates.CONNECTED)
             }
         }
         override fun onMessage(buffer: DataChannel.Buffer?) {
@@ -672,21 +676,34 @@ class RtcEngine(
         val id = json.optString("id")
         when (json.optString("op")) {
             "send" -> {
+                val sz = json.optLong("size", 0)
+                android.util.Log.i("MirrorLinkFile", "SEND id=$id parsedSize=$sz name=${json.optString("name", "file")} rawSize=${json.opt("size")}")
                 incomingFiles[id] = IncomingFile(
                     id = id,
                     name = json.optString("name", "file"),
-                    size = json.optLong("size", 0),
+                    size = sz,
                 )
             }
             "done" -> {
-                incomingFiles.remove(id)?.let { f ->
-                    try {
-                        f.output?.flush()
-                        f.output?.close()
-                    } catch (_: Throwable) {
-                    }
-                    val filePath = f.uri?.let { resolveFilePath(it) }
-                    callback.onFileDone(id, f.name, filePath)
+                val file = incomingFiles[id] ?: return
+                file.doneReceived = true
+                android.util.Log.i("MirrorLinkFile", "DONE signal id=$id received=${file.received} size=${file.size} name=${file.name}")
+                // If we already have all bytes, finalize now
+                if (file.size > 0 && file.received >= file.size) {
+                    finalizeFile(id, file)
+                } else if (file.size <= 0) {
+                    // No size reported, finalize immediately on done
+                    finalizeFile(id, file)
+                } else {
+                    // Chunks still in transit — wait, but set a safety timeout
+                    android.util.Log.i("MirrorLinkFile", "DONE waiting for ${file.size - file.received} more bytes id=$id")
+                    mainHandler.postDelayed({
+                        val f = incomingFiles[id] ?: return@postDelayed
+                        android.util.Log.i("MirrorLinkFile", "DONE timeout firing id=$id received=${f.received}/${f.size}")
+                        if (incomingFiles.containsKey(id)) {
+                            finalizeFile(id, f)
+                        }
+                    }, 5000)
                 }
             }
             "error" -> {
@@ -706,42 +723,52 @@ class RtcEngine(
         if (offset < 0) return
         val payload = bytes.copyOfRange(24, bytes.size)
 
+        android.util.Log.i("MirrorLinkFile", "chunk id=$id offset=$offset payload=${payload.size} receivedBefore=${incomingFiles[id]?.received}")
         val file = incomingFiles[id] ?: return
-        val output = file.output ?: openMediaStoreOutput(file, id) ?: return
+        val output = file.output ?: (openMediaStoreOutput(file, id)?.also { file.output = it }) ?: return
 
         try {
             output.write(payload)
             file.received += payload.size
+            android.util.Log.i("MirrorLinkFile", "wrote id=$id offset=$offset received=${file.received} size=${file.size} done=${file.doneReceived}")
             callback.onFileProgress(id, file.received, file.size)
-            if (file.size > 0 && file.received >= file.size) {
-                output.flush()
-                output.close()
-                file.output = null
-                val uri = file.uri
-                incomingFiles.remove(id)
-                val filePath = uri?.let { resolveFilePath(it) }
-                callback.onFileDone(id, file.name, filePath)
-                // Open the received file and show a toast.
-                if (uri != null) {
-                    val mime = mimeFromExtension(file.name)
-                    mainHandler.post {
-                        try {
-                            val openIntent = Intent(Intent.ACTION_VIEW).apply {
-                                setDataAndType(uri, mime)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(Intent.createChooser(openIntent, "Open ${file.name}"))
-                        } catch (_: Exception) {}
-                        android.widget.Toast.makeText(
-                            context,
-                            "File received: ${file.name}",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                }
+            // Finalize when done signal received AND all bytes arrived
+            if (file.doneReceived && file.size > 0 && file.received >= file.size) {
+                finalizeFile(id, file)
             }
         } catch (_: Exception) {
             incomingFiles.remove(id)?.output?.close()
+        }
+    }
+
+    private fun finalizeFile(id: String, file: IncomingFile) {
+        if (!incomingFiles.containsKey(id)) return
+        incomingFiles.remove(id)
+        android.util.Log.i("MirrorLinkFile", "FINALIZE id=$id received=${file.received} size=${file.size} name=${file.name}")
+        try {
+            file.output?.flush()
+            file.output?.close()
+        } catch (_: Throwable) {
+        }
+        val filePath = file.uri?.let { resolveFilePath(it, file.name) }
+        android.util.Log.i("MirrorLinkFile", "FINALIZE path=$filePath")
+        callback.onFileDone(id, file.name, filePath)
+        if (file.uri != null) {
+            val mime = mimeFromExtension(file.name)
+            mainHandler.post {
+                try {
+                    val openIntent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(file.uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(openIntent, "Open ${file.name}"))
+                } catch (_: Exception) {}
+                android.widget.Toast.makeText(
+                    context,
+                    "File received: ${file.name}",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
         }
     }
 
@@ -791,7 +818,8 @@ class RtcEngine(
         }
     }
 
-    private fun resolveFilePath(uri: android.net.Uri): String? {
+    private fun resolveFilePath(uri: android.net.Uri, name: String = ""): String? {
+        var ext = ""
         // First try the DATA column (works on pre-Q and some Q+ devices).
         try {
             val cursor = context.contentResolver.query(uri, null, null, null, null)
@@ -802,24 +830,39 @@ class RtcEngine(
                         val path = it.getString(idx)
                         if (path != null && java.io.File(path).exists()) return path
                     }
+                    val nameIdx = it.getColumnIndex(android.provider.MediaStore.MediaColumns.DISPLAY_NAME)
+                    if (nameIdx >= 0) {
+                        val dn = it.getString(nameIdx) ?: ""
+                        val dot = dn.lastIndexOf('.')
+                        if (dot >= 0) ext = dn.substring(dot).lowercase()
+                    }
                 }
             }
         } catch (_: Exception) {}
-        // Fallback: copy content URI to a temp file so Image.file() can read it.
-        return try {
-            val ext = when {
+        // Fall back to the known file name, then the URI string.
+        if (ext.isEmpty()) {
+            val dot = name.lastIndexOf('.')
+            if (dot >= 0) ext = name.substring(dot).lowercase()
+        }
+        if (ext.isEmpty()) {
+            ext = when {
                 uri.toString().contains(".jpg", true) || uri.toString().contains(".jpeg", true) -> ".jpg"
                 uri.toString().contains(".png", true) -> ".png"
                 uri.toString().contains(".gif", true) -> ".gif"
                 uri.toString().contains(".webp", true) -> ".webp"
                 else -> ".tmp"
             }
+        }
+        // Copy content URI to a temp file with the correct extension so that
+        // video players (ExoPlayer) can pick the right extractor.
+        return try {
             val tmp = java.io.File.createTempFile("mirrorlink_", ext, context.cacheDir)
             context.contentResolver.openInputStream(uri)?.use { input ->
                 tmp.outputStream().use { output ->
                     input.copyTo(output)
                 }
             }
+            android.util.Log.i("MirrorLinkFile", "resolvePath ext=$ext tmp=${tmp.absolutePath} len=${tmp.length()}")
             tmp.absolutePath
         } catch (_: Exception) {
             null

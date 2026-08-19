@@ -117,6 +117,7 @@ class MirrorLinkMainActivity : FlutterActivity(), RtcEngine.Callback {
             "sendData" -> {
                 val channel = call.argument<String>("channel") ?: ""
                 val payload = call.argument<String>("payload") ?: ""
+                android.util.Log.i("MirrorLinkRtc", "methodChannel sendData: channel=$channel payloadLen=${payload.length} engine=${engine != null}")
                 engine?.sendData(channel, payload)
                 result.success(null)
             }
@@ -126,6 +127,34 @@ class MirrorLinkMainActivity : FlutterActivity(), RtcEngine.Callback {
             }
             "sendFile" -> {
                 engine?.sendFile(call.argument<String>("uri") ?: "")
+                result.success(null)
+            }
+            "openFile" -> {
+                val path = call.argument<String>("path") ?: ""
+                if (path.isNotEmpty()) {
+                    try {
+                        val file = java.io.File(path)
+                        val uri = if (android.os.Build.VERSION.SDK_INT >= 24) {
+                            androidx.core.content.FileProvider.getUriForFile(
+                                this,
+                                "${packageName}.fileprovider",
+                                file,
+                            )
+                        } else {
+                            android.net.Uri.fromFile(file)
+                        }
+                        val ext = path.substringAfterLast('.', "")
+                        val mime = android.webkit.MimeTypeMap.getSingleton()
+                            .getMimeTypeFromExtension(ext.lowercase()) ?: "*/*"
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, mime)
+                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(android.content.Intent.createChooser(intent, "Open file"))
+                    } catch (e: Throwable) {
+                        android.util.Log.e("MirrorLinkRtc", "openFile failed: ${e.message}")
+                    }
+                }
                 result.success(null)
             }
             else -> result.notImplemented()

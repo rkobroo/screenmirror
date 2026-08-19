@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
-import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -47,7 +46,7 @@ class Transfer {
       );
 }
 
-enum ChatMessageType { text, file, image }
+enum ChatMessageType { text, file, image, video }
 
 @immutable
 class ChatMessage {
@@ -406,6 +405,7 @@ class SessionManager extends ChangeNotifier {
     try {
       json = jsonDecode(raw) as Map<String, dynamic>;
     } catch (_) {
+      _log('control msg PARSE FAILED: raw=${raw.length > 200 ? raw.substring(0, 200) : raw}');
       return;
     }
 
@@ -434,7 +434,12 @@ class SessionManager extends ChangeNotifier {
         break;
       case 'chat':
         final text = json['text'] as String? ?? '';
-        if (text.isNotEmpty) {
+        _log('CHAT RECEIVED: "$text" isEmpty=${text.isEmpty}');
+        // Skip the `[Photo: …]` / `[Video: …]` control notices — the actual
+        // media arrives as a separate file message with a thumbnail.
+        if (text.isNotEmpty &&
+            !text.startsWith('[Photo:') &&
+            !text.startsWith('[Video:')) {
           _messages.add(ChatMessage(
             text: text,
             fromMe: false,
@@ -513,8 +518,10 @@ class SessionManager extends ChangeNotifier {
 
   // ---- file transfer (PC → phone) ---------------------------------------------
 
-  /// Stream a local file to the phone.
-  Future<void> sendFileToPhone(String path) async {
+  /// Stream a local file to the phone. When [chatMessage] is false the
+  /// transfer still happens (and shows in the transfers card) but no extra
+  /// "Sending …" chat bubble is added — used for inline chat photos/videos.
+  Future<void> sendFileToPhone(String path, {bool chatMessage = true}) async {
     final channel = _files;
     if (channel == null) return;
 
@@ -524,15 +531,17 @@ class SessionManager extends ChangeNotifier {
     final name = file.uri.pathSegments.last;
 
     _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'to'));
-    _messages.add(ChatMessage(
-      text: 'Sending $name',
-      fromMe: true,
-      time: DateTime.now(),
-      type: ChatMessageType.file,
-      fileName: name,
-      fileSize: size,
-      transferId: id,
-    ));
+    if (chatMessage) {
+      _messages.add(ChatMessage(
+        text: 'Sending $name',
+        fromMe: true,
+        time: DateTime.now(),
+        type: ChatMessageType.file,
+        fileName: name,
+        fileSize: size,
+        transferId: id,
+      ));
+    }
     notifyListeners();
 
     _sendControl({
@@ -572,7 +581,51 @@ class SessionManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Send a photo in chat, showing a local thumbnail immediately and
+  /// transferring the file to the phone.
+  void sendPhotoMessage(String path, String fileName) {
+    final name =
+        fileName.isNotEmpty ? fileName : File(path).uri.pathSegments.last;
+    _messages.add(ChatMessage(
+      text: '[Photo: $name]',
+      fromMe: true,
+      time: DateTime.now(),
+      type: ChatMessageType.image,
+      filePath: path,
+      fileName: name,
+    ));
+    notifyListeners();
+    if (_control != null) _sendControl({'type': 'chat', 'text': '[Photo: $name]'});
+    sendFileToPhone(path, chatMessage: false);
+  }
+
+  /// Send a video in chat, showing a local thumbnail immediately and
+  /// transferring the file to the phone.
+  void sendVideoMessage(String path, String fileName) {
+    final name =
+        fileName.isNotEmpty ? fileName : File(path).uri.pathSegments.last;
+    _messages.add(ChatMessage(
+      text: '[Video: $name]',
+      fromMe: true,
+      time: DateTime.now(),
+      type: ChatMessageType.video,
+      filePath: path,
+      fileName: name,
+    ));
+    notifyListeners();
+    if (_control != null) _sendControl({'type': 'chat', 'text': '[Video: $name]'});
+    sendFileToPhone(path, chatMessage: false);
+  }
+
   // ---- inbound file transfer (phone → PC) --------------------------------------
+
+  bool _isMediaFile(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    return const {
+      'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+      'mp4', 'mkv', 'mov', 'avi', 'webm'
+    }.contains(ext);
+  }
 
   void _onFileControl(Map<String, dynamic> json) {
     final id = json['id'] as String? ?? '';
@@ -581,15 +634,19 @@ class SessionManager extends ChangeNotifier {
         final name = json['name'] as String? ?? 'file';
         final size = (json['size'] as num?)?.toInt() ?? 0;
         _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'from'));
-        _messages.add(ChatMessage(
-          text: 'Receiving $name',
-          fromMe: false,
-          time: DateTime.now(),
-          type: ChatMessageType.file,
-          fileName: name,
-          fileSize: size,
-          transferId: id,
-        ));
+        // For chat photos/videos the thumbnail arrives on completion, so don't
+        // show the raw filename as a separate bubble here.
+        if (!_isMediaFile(name)) {
+          _messages.add(ChatMessage(
+            text: 'Receiving $name',
+            fromMe: false,
+            time: DateTime.now(),
+            type: ChatMessageType.file,
+            fileName: name,
+            fileSize: size,
+            transferId: id,
+          ));
+        }
         notifyListeners();
         break;
       case 'done':
@@ -603,7 +660,7 @@ class SessionManager extends ChangeNotifier {
             orElse: () => Transfer(id: id, name: file.path.split('\\').last, size: 0, direction: 'from'),
           );
           _messages.add(ChatMessage(
-            text: '${transfer.name} saved',
+            text: _isMediaFile(transfer.name) ? '' : '${transfer.name} saved',
             fromMe: false,
             time: DateTime.now(),
             type: ChatMessageType.file,

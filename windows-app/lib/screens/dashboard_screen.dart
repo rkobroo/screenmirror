@@ -3,12 +3,14 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../app_services.dart';
 import '../models/device.dart';
 import '../services/session_manager.dart';
 import 'settings_screen.dart';
 import 'viewer_screen.dart';
+import '../widgets/media_viewer.dart';
 
 /// Main window: pairing code, live session, transfers, and history.
 class DashboardScreen extends StatefulWidget {
@@ -334,16 +336,70 @@ class _TransfersCard extends StatelessWidget {
   }
 }
 
-class _ChatCard extends StatefulWidget {
+class _ChatCard extends StatelessWidget {
   const _ChatCard({required this.services});
 
   final AppServices services;
 
   @override
-  State<_ChatCard> createState() => _ChatCardState();
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.chat_bubble_outline, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Text('Chat',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w600)),
+                const Spacer(),
+                AnimatedBuilder(
+                  animation: services.session,
+                  builder: (context, _) {
+                    final n = services.session.messages.length;
+                    return n > 0
+                        ? Text('$n messages',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant))
+                        : const SizedBox.shrink();
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.fullscreen, size: 20),
+                  tooltip: 'Expand chat',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => _ChatFullScreenPage(services: services)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _ChatPanel(services: services),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
-class _ChatCardState extends State<_ChatCard> {
+class _ChatPanel extends StatefulWidget {
+  const _ChatPanel({required this.services, this.fullscreen = false});
+
+  final AppServices services;
+  final bool fullscreen;
+
+  @override
+  State<_ChatPanel> createState() => _ChatPanelState();
+}
+
+class _ChatPanelState extends State<_ChatPanel> {
   final _textCtrl = TextEditingController();
   final _scrollCtrl = ScrollController();
 
@@ -367,14 +423,21 @@ class _ChatCardState extends State<_ChatCard> {
     });
   }
 
-  Future<void> _pickAndSendFile() async {
-    final result = await FilePicker.platform.pickFiles();
+  Future<void> _pickAndSendMedia() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'mp4', 'mkv', 'mov', 'avi', 'webm'],
+    );
     if (result == null || result.files.isEmpty) return;
     final path = result.files.single.path;
     if (path == null) return;
     final name = result.files.single.name;
-    widget.services.session.sendChatMessage('[File: $name]');
-    await widget.services.session.sendFileToPhone(path);
+    final ext = name.split('.').last.toLowerCase();
+    if (['mp4', 'mkv', 'mov', 'avi', 'webm'].contains(ext)) {
+      widget.services.session.sendVideoMessage(path, name);
+    } else {
+      widget.services.session.sendPhotoMessage(path, name);
+    }
   }
 
   void _openFile(String path) {
@@ -386,69 +449,56 @@ class _ChatCardState extends State<_ChatCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final messages = widget.services.session.messages;
-    final connected = widget.services.session.device != null;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.chat_bubble_outline, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('Chat',
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600)),
-                const Spacer(),
-                if (messages.isNotEmpty)
-                  Text('${messages.length} messages',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-              ],
-            ),
-            const SizedBox(height: 12),
-            if (!connected)
-              Text('Connect a phone to start chatting.',
-                  style: theme.textTheme.bodyMedium)
-            else ...[
-              // Message list
-              Container(
+    return AnimatedBuilder(
+      animation: widget.services.session,
+      builder: (context, _) {
+        final messages = widget.services.session.messages;
+        final connected = widget.services.session.device != null;
+        final listWidget = messages.isEmpty
+            ? const Center(
+                child: Text(
+                  'No messages yet. Say hello!',
+                  style: TextStyle(color: Colors.white38, fontSize: 13),
+                ),
+              )
+            : ListView.builder(
+                controller: _scrollCtrl,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                itemCount: messages.length,
+                itemBuilder: (context, index) {
+                  final msg = messages[index];
+                  return _DashboardChatBubble(
+                    msg: msg,
+                    onOpenFile: _openFile,
+                  );
+                },
+              );
+        final listArea = widget.fullscreen
+            ? Expanded(child: listWidget)
+            : Container(
                 height: 220,
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surfaceContainerHighest.withAlpha(80),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: messages.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No messages yet. Say hello!',
-                          style: TextStyle(color: Colors.white38, fontSize: 13),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: _scrollCtrl,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        itemCount: messages.length,
-                        itemBuilder: (context, index) {
-                          final msg = messages[index];
-                          return _DashboardChatBubble(
-                            msg: msg,
-                            onOpenFile: _openFile,
-                          );
-                        },
-                      ),
-              ),
+                child: listWidget,
+              );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (!connected)
+              Text('Connect a phone to start chatting.',
+                  style: theme.textTheme.bodyMedium)
+            else ...[
+              listArea,
               const SizedBox(height: 10),
-              // Text input row
               Row(
                 children: [
                   IconButton(
-                    onPressed: _pickAndSendFile,
-                    icon: const Icon(Icons.attach_file, size: 20),
-                    tooltip: 'Attach file',
+                    onPressed: _pickAndSendMedia,
+                    icon: const Icon(Icons.add_photo_alternate, size: 20),
+                    tooltip: 'Send photo or video',
                   ),
                   Expanded(
                     child: TextField(
@@ -478,6 +528,33 @@ class _ChatCardState extends State<_ChatCard> {
               ),
             ],
           ],
+        );
+      },
+    );
+  }
+}
+
+class _ChatFullScreenPage extends StatelessWidget {
+  const _ChatFullScreenPage({required this.services});
+
+  final AppServices services;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Chat'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: _ChatPanel(services: services, fullscreen: true),
         ),
       ),
     );
@@ -546,16 +623,44 @@ class _DashboardChatBubble extends StatelessWidget {
   }
 
   Widget _buildContent(BuildContext context, Color textColor) {
-    if (msg.type == ChatMessageType.text) {
-      return Text(
-        msg.text,
-        style: TextStyle(color: textColor, fontSize: 13),
+    if (msg.type == ChatMessageType.text && !msg.text.startsWith('[Photo:') && !msg.text.startsWith('[Video:')) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Flexible(
+            child: SelectableText(
+              msg.text,
+              style: TextStyle(color: textColor, fontSize: 13),
+            ),
+          ),
+          const SizedBox(width: 4),
+          GestureDetector(
+            onTap: () {
+              Clipboard.setData(ClipboardData(text: msg.text));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Copied to clipboard'),
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(2),
+              child: Icon(Icons.copy, size: 14, color: textColor.withAlpha(120)),
+            ),
+          ),
+        ],
       );
     }
 
-    // File / image
     final isImage = msg.type == ChatMessageType.image ||
-        (msg.fileName.isNotEmpty && _isImageExt(msg.fileName));
+        (msg.fileName.isNotEmpty && _isImageExt(msg.fileName)) ||
+        (msg.text.startsWith('[Photo:'));
+
+    final isVideo = msg.type == ChatMessageType.video ||
+        (msg.fileName.isNotEmpty && _isVideoExt(msg.fileName)) ||
+        (msg.text.startsWith('[Video:'));
 
     if (isImage && msg.filePath.isNotEmpty) {
       return Column(
@@ -565,7 +670,7 @@ class _DashboardChatBubble extends StatelessWidget {
           ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: GestureDetector(
-              onTap: () => _openFile(msg.filePath),
+              onTap: () => _openMedia(context, msg.filePath, false),
               child: Image.file(
                 File(msg.filePath),
                 width: 200,
@@ -580,10 +685,32 @@ class _DashboardChatBubble extends StatelessWidget {
               ),
             ),
           ),
-          if (msg.text.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(msg.text, style: TextStyle(color: textColor, fontSize: 11)),
-          ],
+        ],
+      );
+    }
+
+    if (isVideo && msg.filePath.isNotEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onTap: () => _openMedia(context, msg.filePath, true),
+            child: Container(
+              width: 200,
+              height: 130,
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Stack(
+                alignment: Alignment.center,
+                children: [
+                  Icon(Icons.play_circle_filled, color: Colors.white, size: 48),
+                ],
+              ),
+            ),
+          ),
         ],
       );
     }
@@ -647,9 +774,22 @@ class _DashboardChatBubble extends StatelessWidget {
     }
   }
 
+  void _openMedia(BuildContext context, String path, bool isVideo) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MediaViewerScreen(filePath: path, isVideo: isVideo),
+      ),
+    );
+  }
+
   static bool _isImageExt(String name) {
     final ext = name.split('.').last.toLowerCase();
     return {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(ext);
+  }
+
+  static bool _isVideoExt(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    return {'mp4', 'mkv', 'avi', 'mov', 'webm'}.contains(ext);
   }
 
   static IconData _fileIcon(String name) {

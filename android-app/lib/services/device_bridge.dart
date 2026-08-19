@@ -123,6 +123,10 @@ class DeviceBridge {
   Future<void> sendFile(String contentUri) =>
       _channel.invokeMethod<void>('sendFile', {'uri': contentUri});
 
+  /// Open a local file (real path, not content URI) via Android Intent.
+  Future<void> openFile(String path) =>
+      _channel.invokeMethod<void>('openFile', {'path': path});
+
   Future<void> dispose() async {
     await _eventSub?.cancel();
     await _eventController.close();

@@ -15,6 +15,7 @@ import 'package:window_manager/window_manager.dart';
 import '../app_services.dart';
 import '../services/mjpeg_writer.dart';
 import '../services/session_manager.dart';
+import '../widgets/media_viewer.dart';
 
 /// Remote viewer: live phone screen plus remote control (mouse, keyboard,
 /// system buttons), screenshot, and screen recording.
@@ -540,26 +541,72 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 }
 
-class _VideoView extends StatelessWidget {
+class _VideoView extends StatefulWidget {
   const _VideoView({required this.session});
 
   final SessionManager session;
 
   @override
+  State<_VideoView> createState() => _VideoViewState();
+}
+
+class _VideoViewState extends State<_VideoView> {
+  bool _rendering = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _startCheck();
+  }
+
+  @override
+  void didUpdateWidget(covariant _VideoView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session != widget.session) {
+      _timer?.cancel();
+      _startCheck();
+    }
+  }
+
+  void _startCheck() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(milliseconds: 200), (t) {
+      if (!mounted) { t.cancel(); return; }
+      try {
+        if (widget.session.renderer.value.renderVideo) {
+          t.cancel();
+          if (mounted) setState(() => _rendering = true);
+        }
+      } catch (_) {}
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    try {
-      return RTCVideoView(
-        session.renderer,
-        objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
-      );
-    } catch (e) {
-      return Center(
-        child: Text(
-          'Renderer not ready: $e',
-          style: const TextStyle(color: Colors.white54),
+    if (!_rendering) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.white54),
+            SizedBox(height: 12),
+            Text('Connecting video…',
+                style: TextStyle(color: Colors.white54, fontSize: 12)),
+          ],
         ),
       );
     }
+    return RTCVideoView(
+      widget.session.renderer,
+      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+    );
   }
 }
 
@@ -806,6 +853,31 @@ class _ChatBubble extends StatelessWidget {
           msg.text,
           style: const TextStyle(color: Colors.white, fontSize: 13),
         );
+      case ChatMessageType.video:
+        return GestureDetector(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => MediaViewerScreen(
+                filePath: msg.filePath,
+                isVideo: true,
+              ),
+            ),
+          ),
+          child: Container(
+            width: 180,
+            height: 120,
+            decoration: BoxDecoration(
+              color: Colors.black87,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(Icons.play_circle_filled, color: Colors.white, size: 42),
+              ],
+            ),
+          ),
+        );
       case ChatMessageType.file:
       case ChatMessageType.image:
         final isImage = msg.type == ChatMessageType.image ||
@@ -818,7 +890,14 @@ class _ChatBubble extends StatelessWidget {
               ClipRRect(
                 borderRadius: BorderRadius.circular(6),
                 child: GestureDetector(
-                  onTap: () => onOpenFile(msg.filePath),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => MediaViewerScreen(
+                        filePath: msg.filePath,
+                        isVideo: false,
+                      ),
+                    ),
+                  ),
                   child: Image.file(
                     File(msg.filePath),
                     width: 180,
@@ -832,11 +911,6 @@ class _ChatBubble extends StatelessWidget {
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                msg.text,
-                style: const TextStyle(color: Colors.white70, fontSize: 11),
               ),
             ],
           );

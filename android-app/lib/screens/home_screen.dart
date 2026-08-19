@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart' hide ConnectionState;
 import 'package:flutter/services.dart';
+import 'package:video_player/video_player.dart';
 
 import '../app_services.dart';
 import '../services/connection_controller.dart';
+import '../services/device_bridge.dart';
 import '../services/file_transfer_service.dart';
 import 'pairing_screen.dart';
 import 'settings_screen.dart';
@@ -298,60 +300,14 @@ class _AccessibilityBannerState extends State<_AccessibilityBanner> {
   }
 }
 
-class _ChatCard extends StatefulWidget {
+class _ChatCard extends StatelessWidget {
   const _ChatCard({required this.services});
 
   final AppServices services;
 
   @override
-  State<_ChatCard> createState() => _ChatCardState();
-}
-
-class _ChatCardState extends State<_ChatCard> {
-  final _textCtrl = TextEditingController();
-  final _scrollCtrl = ScrollController();
-
-  @override
-  void dispose() {
-    _textCtrl.dispose();
-    _scrollCtrl.dispose();
-    super.dispose();
-  }
-
-  void _send() {
-    final text = _textCtrl.text.trim();
-    if (text.isEmpty) return;
-    widget.services.controller.sendChatMessage(text);
-    _textCtrl.clear();
-    setState(() {});
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollCtrl.hasClients) {
-        _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
-      }
-    });
-  }
-
-  Future<void> _pickAndSendImage() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.image,
-      allowCompression: false,
-    );
-    if (result == null || result.files.isEmpty) return;
-    final f = result.files.single;
-    final path = f.path;
-    if (path == null) return;
-    widget.services.controller.sendPhotoMessage(path, f.name);
-  }
-
-  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final controller = widget.services.controller;
-    final messages = controller.messages;
-    final connected = controller.state == ConnectionState.streaming ||
-        controller.state == ConnectionState.negotiating ||
-        controller.state == ConnectionState.pairing;
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -366,137 +322,268 @@ class _ChatCardState extends State<_ChatCard> {
                     style: theme.textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w600)),
                 const Spacer(),
-                if (messages.isNotEmpty)
-                  Text('${messages.length}',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                AnimatedBuilder(
+                  animation: services.controller,
+                  builder: (context, _) {
+                    final n = services.controller.messages.length;
+                    return n > 0
+                        ? Text('$n',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant))
+                        : const SizedBox.shrink();
+                  },
+                ),
+                IconButton(
+                  icon: const Icon(Icons.fullscreen, size: 20),
+                  tooltip: 'Expand chat',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => _ChatFullScreenPage(services: services)),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 8),
-            if (messages.isEmpty && !connected)
-              Text('Connect to PC to chat.',
-                  style: theme.textTheme.bodySmall)
-            else ...[
-              Container(
-                constraints: const BoxConstraints(minHeight: 120, maxHeight: 340),
+            _ChatPanel(services: services),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChatPanel extends StatefulWidget {
+  const _ChatPanel({required this.services, this.fullscreen = false});
+
+  final AppServices services;
+  final bool fullscreen;
+
+  @override
+  State<_ChatPanel> createState() => _ChatPanelState();
+}
+
+class _ChatPanelState extends State<_ChatPanel> {
+  final _textCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+
+  @override
+  void dispose() {
+    _textCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final text = _textCtrl.text.trim();
+    if (text.isEmpty) return;
+    debugPrint('[MirrorLink][CHAT_UI] _send called with text="$text"');
+    widget.services.controller.sendChatMessage(text);
+    _textCtrl.clear();
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+      }
+    });
+  }
+
+  Future<void> _pickAndSendMedia() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'mp4', 'mkv', 'mov', 'avi', 'webm'],
+      allowCompression: false,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final f = result.files.single;
+    final path = f.path;
+    if (path == null) return;
+    final ext = f.name.split('.').last.toLowerCase();
+    if (['mp4', 'mkv', 'mov', 'avi', 'webm'].contains(ext)) {
+      widget.services.controller.sendVideoMessage(path, f.name);
+    } else {
+      widget.services.controller.sendPhotoMessage(path, f.name);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AnimatedBuilder(
+      animation: widget.services.controller,
+      builder: (context, _) {
+        final controller = widget.services.controller;
+        final messages = controller.messages;
+        final connected = controller.state == ConnectionState.streaming ||
+            controller.state == ConnectionState.negotiating ||
+            controller.state == ConnectionState.pairing;
+        final listWidget = messages.isEmpty
+            ? const Center(
+                child: Text(
+                  'No messages yet.',
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              )
+            : ListView.builder(
+                controller: _scrollCtrl,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                itemCount: messages.length,
+                itemBuilder: (context, index) {
+                  final msg = messages[index];
+                  final isMe = msg.fromMe;
+                  final timeStr =
+                      '${msg.time.hour.toString().padLeft(2, '0')}:${msg.time.minute.toString().padLeft(2, '0')}';
+                  return GestureDetector(
+                    onLongPress: () {
+                      Clipboard.setData(ClipboardData(text: msg.text));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Copied to clipboard'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
+                    },
+                    child: Align(
+                      alignment: isMe
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        constraints: BoxConstraints(
+                          maxWidth: widget.fullscreen
+                              ? MediaQuery.of(context).size.width * 0.8
+                              : MediaQuery.of(context).size.width * 0.7,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isMe
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: isMe
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (msg.type == ChatMessageType.image &&
+                                msg.filePath.isNotEmpty)
+                              GestureDetector(
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => _MediaViewerScreen(
+                                        filePath: msg.filePath,
+                                        isVideo: false,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(
+                                    File(msg.filePath),
+                                    width: 200,
+                                    height: 130,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      width: 200,
+                                      height: 60,
+                                      color: Colors.white12,
+                                      child: const Icon(Icons.broken_image,
+                                          color: Colors.white38),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            if (msg.type == ChatMessageType.image &&
+                                msg.filePath.isNotEmpty)
+                              const SizedBox(height: 4),
+                            if (msg.type == ChatMessageType.video &&
+                                msg.filePath.isNotEmpty)
+                              GestureDetector(
+                                onTap: () {
+                                  DeviceBridge.instance.openFile(msg.filePath);
+                                },
+                                child: Container(
+                                  width: 200,
+                                  height: 130,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black87,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: const Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.play_circle_filled,
+                                        size: 48,
+                                        color: Colors.white,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            if (msg.type == ChatMessageType.video &&
+                                msg.filePath.isNotEmpty)
+                              const SizedBox(height: 4),
+                            if (msg.type == ChatMessageType.text)
+                              Text(
+                                msg.text,
+                                style: TextStyle(
+                                  color: isMe
+                                      ? theme.colorScheme.onPrimary
+                                      : theme.colorScheme.onSurface,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${isMe ? "You" : "PC"} · $timeStr',
+                              style: TextStyle(
+                                color: isMe
+                                    ? theme.colorScheme.onPrimary.withAlpha(140)
+                                    : Colors.white38,
+                                fontSize: 9,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+        final listArea = widget.fullscreen
+            ? Expanded(child: listWidget)
+            : Container(
+                constraints:
+                    const BoxConstraints(minHeight: 120, maxHeight: 340),
                 decoration: BoxDecoration(
                   color: theme.colorScheme.surfaceContainerHighest.withAlpha(80),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: messages.isEmpty
-                    ? const Center(
-                        child: Text(
-                          'No messages yet.',
-                          style: TextStyle(color: Colors.white38, fontSize: 12),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: _scrollCtrl,
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        itemCount: messages.length,
-                        itemBuilder: (context, index) {
-                          final msg = messages[index];
-                          final isMe = msg.fromMe;
-                          final timeStr =
-                              '${msg.time.hour.toString().padLeft(2, '0')}:${msg.time.minute.toString().padLeft(2, '0')}';
-                          return GestureDetector(
-                            onLongPress: () {
-                              Clipboard.setData(ClipboardData(text: msg.text));
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Copied to clipboard'),
-                                  duration: Duration(seconds: 1),
-                                ),
-                              );
-                            },
-                            child: Align(
-                              alignment: isMe
-                                  ? Alignment.centerRight
-                                  : Alignment.centerLeft,
-                              child: Container(
-                                margin:
-                                    const EdgeInsets.symmetric(vertical: 2),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 6),
-                                constraints: BoxConstraints(
-                                  maxWidth:
-                                      MediaQuery.of(context).size.width * 0.7,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: isMe
-                                      ? theme.colorScheme.primary
-                                      : theme
-                                          .colorScheme.surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: isMe
-                                      ? CrossAxisAlignment.end
-                                      : CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    if (msg.type == ChatMessageType.image &&
-                                        msg.filePath.isNotEmpty)
-                                      ClipRRect(
-                                        borderRadius:
-                                            BorderRadius.circular(8),
-                                        child: Image.file(
-                                          File(msg.filePath),
-                                          width: 200,
-                                          height: 130,
-                                          fit: BoxFit.cover,
-                                          errorBuilder: (_, __, ___) =>
-                                              Container(
-                                            width: 200,
-                                            height: 60,
-                                            color: Colors.white12,
-                                            child: const Icon(
-                                                Icons.broken_image,
-                                                color: Colors.white38),
-                                          ),
-                                        ),
-                                      ),
-                                    if (msg.type == ChatMessageType.image &&
-                                        msg.filePath.isNotEmpty)
-                                      const SizedBox(height: 4),
-                                    Text(
-                                      msg.type == ChatMessageType.image
-                                          ? msg.fileName
-                                          : msg.text,
-                                      style: TextStyle(
-                                        color: isMe
-                                            ? theme.colorScheme.onPrimary
-                                            : theme.colorScheme.onSurface,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '${isMe ? "You" : "PC"} · $timeStr',
-                                      style: TextStyle(
-                                        color: isMe
-                                            ? theme.colorScheme.onPrimary
-                                                .withAlpha(140)
-                                            : Colors.white38,
-                                        fontSize: 9,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
+                child: listWidget,
+              );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (messages.isEmpty && !connected)
+              Text('Connect to PC to chat.', style: theme.textTheme.bodySmall)
+            else ...[
+              listArea,
               const SizedBox(height: 8),
-              if (connected) ...[
+              if (connected)
                 Row(
                   children: [
                     IconButton(
-                      onPressed: _pickAndSendImage,
-                      icon: const Icon(Icons.attach_file, size: 20),
-                      tooltip: 'Attach photo',
+                      onPressed: _pickAndSendMedia,
+                      icon: const Icon(Icons.add_photo_alternate, size: 20),
+                      tooltip: 'Send photo or video',
                     ),
                     Expanded(
                       child: TextField(
@@ -504,10 +591,14 @@ class _ChatCardState extends State<_ChatCard> {
                         style: const TextStyle(fontSize: 13),
                         decoration: InputDecoration(
                           hintText: 'Type a message...',
-                          hintStyle: const TextStyle(color: Colors.white38, fontSize: 13),
+                          hintStyle: const TextStyle(
+                              color: Colors.white38, fontSize: 13),
                           filled: true,
-                          fillColor: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          fillColor: theme
+                              .colorScheme.surfaceContainerHighest
+                              .withAlpha(120),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 8),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(24),
                             borderSide: BorderSide.none,
@@ -519,13 +610,40 @@ class _ChatCardState extends State<_ChatCard> {
                     const SizedBox(width: 8),
                     IconButton(
                       onPressed: _send,
-                      icon: Icon(Icons.send, color: theme.colorScheme.primary),
+                      icon: Icon(Icons.send,
+                          color: theme.colorScheme.primary),
                     ),
                   ],
                 ),
-              ],
             ],
           ],
+        );
+      },
+    );
+  }
+}
+
+class _ChatFullScreenPage extends StatelessWidget {
+  const _ChatFullScreenPage({required this.services});
+
+  final AppServices services;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Chat'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: _ChatPanel(services: services, fullscreen: true),
         ),
       ),
     );
@@ -595,6 +713,117 @@ class _FileTransfersCard extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _MediaViewerScreen extends StatefulWidget {
+  const _MediaViewerScreen({required this.filePath, required this.isVideo});
+  final String filePath;
+  final bool isVideo;
+
+  @override
+  State<_MediaViewerScreen> createState() => _MediaViewerScreenState();
+}
+
+class _MediaViewerScreenState extends State<_MediaViewerScreen> {
+  VideoPlayerController? _controller;
+  bool _error = false;
+  bool _triedExternal = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isVideo && widget.filePath.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openExternal());
+    } else if (widget.isVideo) {
+      _error = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openExternal());
+    }
+  }
+
+  void _initVideo() {
+    _controller?.dispose();
+    _controller = VideoPlayerController.file(File(widget.filePath))
+      ..initialize().then((_) {
+        if (mounted) {
+          setState(() {});
+          _controller?.play();
+        }
+      }).catchError((e) {
+        debugPrint('[MirrorLink] video init error: $e');
+        if (mounted) {
+          _openExternal();
+        }
+      });
+  }
+
+  Future<void> _openExternal() async {
+    if (_triedExternal) return;
+    _triedExternal = true;
+    try {
+      await DeviceBridge.instance.openFile(widget.filePath);
+    } catch (_) {}
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final initialized = _controller?.value.isInitialized == true;
+    final fallback = Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          widget.isVideo ? 'Opening in video player...' : 'Image not available',
+          style: const TextStyle(color: Colors.white70),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+      ),
+      body: Center(
+        child: widget.isVideo
+            ? (_error
+                ? fallback
+                : (initialized
+                    ? AspectRatio(
+                        aspectRatio: _controller!.value.aspectRatio,
+                        child: VideoPlayer(_controller!),
+                      )
+                    : const CircularProgressIndicator()))
+            : (widget.filePath.isEmpty
+                ? fallback
+                : InteractiveViewer(
+                    child: Image.file(File(widget.filePath),
+                        fit: BoxFit.contain,
+                        errorBuilder: (_, __, ___) => fallback),
+                  )),
+      ),
+      floatingActionButton: widget.isVideo && initialized && !_error
+          ? FloatingActionButton(
+              onPressed: () {
+                setState(() {
+                  _controller!.value.isPlaying
+                      ? _controller!.pause()
+                      : _controller!.play();
+                });
+              },
+              child: Icon(
+                _controller!.value.isPlaying ? Icons.pause : Icons.play_arrow,
+              ),
+            )
+          : null,
     );
   }
 }

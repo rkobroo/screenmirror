@@ -21,7 +21,7 @@ enum ConnectionState {
   error,
 }
 
-enum ChatMessageType { text, file, image }
+enum ChatMessageType { text, file, image, video }
 
 class ChatMessage {
   const ChatMessage({
@@ -61,12 +61,14 @@ class ConnectionController extends ChangeNotifier {
 
   final List<NearbyDevice> _devices = [];
   final List<ChatMessage> _messages = [];
+  final List<String> _pendingChats = [];
 
   ConnectionState _state = ConnectionState.idle;
   NearbyDevice? _connectedTo;
   int _fps = 0;
   int _bps = 0;
   String _lastError = '';
+  bool _controlChannelOpen = false;
 
   StreamSubscription<Map<String, dynamic>>? _bridgeSub;
   StreamSubscription<Map<String, dynamic>>? _signalSub;
@@ -79,6 +81,7 @@ class ConnectionController extends ChangeNotifier {
   int get bps => _bps;
   String get lastError => _lastError;
   bool get isStreaming => _state == ConnectionState.streaming;
+  bool get isControlOpen => _controlChannelOpen;
   List<ChatMessage> get messages => List.unmodifiable(_messages);
 
   /// Debounced rebuild throttle for high-frequency stats events.
@@ -146,6 +149,7 @@ class ConnectionController extends ChangeNotifier {
     _connectedTo = null;
     _fps = 0;
     _bps = 0;
+    _controlChannelOpen = false;
     _setState(ConnectionState.idle);
   }
 
@@ -241,9 +245,21 @@ class ConnectionController extends ChangeNotifier {
         break;
       case EventType.chat:
         final text = event['text'] as String? ?? '';
-        if (text.isNotEmpty) {
+        // Skip the `[Photo: …]` / `[Video: …]` control notices — the actual
+        // media arrives as a separate file message with a thumbnail.
+        if (text.isNotEmpty &&
+            !text.startsWith('[Photo:') &&
+            !text.startsWith('[Video:')) {
           _messages.add(ChatMessage(text: text, fromMe: false, time: DateTime.now()));
           notifyListeners();
+        }
+        break;
+      case EventType.dcOpen:
+        final channel = event['value'] as String? ?? '';
+        debugPrint('[MirrorLink][CHAT_CTRL] dcOpen event: channel=$channel');
+        if (channel == 'control') {
+          _controlChannelOpen = true;
+          _flushPendingChats();
         }
         break;
       case EventType.fileDone:
@@ -261,6 +277,17 @@ class ConnectionController extends ChangeNotifier {
             fileName: name,
           ));
           notifyListeners();
+        } else if ({'mp4', 'mkv', 'mov', 'avi', 'webm'}.contains(ext) &&
+            filePath.isNotEmpty) {
+          _messages.add(ChatMessage(
+            text: '[Video: $name]',
+            fromMe: false,
+            time: DateTime.now(),
+            type: ChatMessageType.video,
+            filePath: filePath,
+            fileName: name,
+          ));
+          notifyListeners();
         }
         break;
       case EventType.stats:
@@ -272,18 +299,21 @@ class ConnectionController extends ChangeNotifier {
   }
 
   void _onNativeState(String value) {
+    debugPrint('[MirrorLink][CHAT_CTRL] _onNativeState: $value');
     switch (value) {
       case NativeState.ready:
-        // Native peer is up and the offer is ready; wait for negotiation.
         _setState(ConnectionState.negotiating);
         break;
       case NativeState.starting:
         _setState(ConnectionState.negotiating);
         break;
       case NativeState.connected:
+        _controlChannelOpen = true;
         _setState(ConnectionState.streaming);
+        _flushPendingChats();
         break;
       case NativeState.disconnected:
+        _controlChannelOpen = false;
         _setState(ConnectionState.disconnected);
         break;
       case NativeState.permissionDenied:
@@ -310,11 +340,39 @@ class ConnectionController extends ChangeNotifier {
   /// Send a chat message to the PC.
   void sendChatMessage(String text) {
     if (text.isEmpty) return;
+    debugPrint('[MirrorLink][CHAT_CTRL] sendChatMessage: "$text" isStreaming=$isStreaming state=$_state');
     _messages.add(ChatMessage(text: text, fromMe: true, time: DateTime.now()));
     notifyListeners();
-    if (isStreaming) {
+    _queueOrSendChat(text);
+  }
+
+  void _queueOrSendChat(String text) {
+    debugPrint('[MirrorLink][CHAT_CTRL] _queueOrSendChat: isStreaming=$isStreaming controlOpen=$_controlChannelOpen');
+    if (isStreaming || _controlChannelOpen) {
       final json = jsonEncode({'type': 'chat', 'text': text});
-      bridge.sendData('control', json);
+      debugPrint('[MirrorLink][CHAT_CTRL] _queueOrSendChat: sending via bridge, json=$json');
+      bridge.sendData('control', json).then((_) {
+        debugPrint('[MirrorLink][CHAT_CTRL] bridge.sendData completed OK');
+      }).catchError((e) {
+        debugPrint('[MirrorLink][CHAT_CTRL] bridge.sendData FAILED: $e');
+      });
+    } else {
+      debugPrint('[MirrorLink][CHAT_CTRL] _queueOrSendChat: control channel not open, queuing. pendingCount=${_pendingChats.length}');
+      _pendingChats.add(text);
+    }
+  }
+
+  void _flushPendingChats() {
+    debugPrint('[MirrorLink][CHAT_CTRL] _flushPendingChats: ${_pendingChats.length} pending');
+    while (_pendingChats.isNotEmpty) {
+      final text = _pendingChats.removeAt(0);
+      final json = jsonEncode({'type': 'chat', 'text': text});
+      debugPrint('[MirrorLink][CHAT_CTRL] _flushPendingChats: sending "$text"');
+      bridge.sendData('control', json).then((_) {
+        debugPrint('[MirrorLink][CHAT_CTRL] _flushPendingChats: bridge.sendData OK');
+      }).catchError((e) {
+        debugPrint('[MirrorLink][CHAT_CTRL] _flushPendingChats: bridge.sendData FAILED: $e');
+      });
     }
   }
 
@@ -329,8 +387,26 @@ class ConnectionController extends ChangeNotifier {
       fileName: fileName,
     ));
     notifyListeners();
-    if (isStreaming) {
+    if (isStreaming || _controlChannelOpen) {
       final json = jsonEncode({'type': 'chat', 'text': '[Photo: $fileName]'});
+      bridge.sendData('control', json);
+      bridge.sendFile(path);
+    }
+  }
+
+  /// Send a video in chat with a local preview.
+  void sendVideoMessage(String path, String fileName) {
+    _messages.add(ChatMessage(
+      text: '[Video: $fileName]',
+      fromMe: true,
+      time: DateTime.now(),
+      type: ChatMessageType.video,
+      filePath: path,
+      fileName: fileName,
+    ));
+    notifyListeners();
+    if (isStreaming || _controlChannelOpen) {
+      final json = jsonEncode({'type': 'chat', 'text': '[Video: $fileName]'});
       bridge.sendData('control', json);
       bridge.sendFile(path);
     }
