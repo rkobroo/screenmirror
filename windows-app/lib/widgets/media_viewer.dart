@@ -18,6 +18,7 @@ class MediaViewerScreen extends StatefulWidget {
 class _MediaViewerScreenState extends State<MediaViewerScreen> {
   VideoPlayerController? _controller;
   bool _error = false;
+  bool _triedExternal = false;
 
   @override
   void initState() {
@@ -25,7 +26,7 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
     if (widget.isVideo) {
       if (widget.filePath.isEmpty) {
         _error = true;
-        setState(() {});
+        WidgetsBinding.instance.addPostFrameCallback((_) => _openExternal());
         return;
       }
       _controller = VideoPlayerController.file(File(widget.filePath))
@@ -37,11 +38,24 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
         }).catchError((e) {
           debugPrint('MediaViewer video init error: $e');
           if (mounted) {
-            _error = true;
-            setState(() {});
+            _openExternal();
           }
         });
     }
+  }
+
+  void _openExternal() {
+    if (_triedExternal) {
+      if (mounted) {
+        setState(() => _error = true);
+      }
+      return;
+    }
+    _triedExternal = true;
+    try {
+      Process.run('cmd', ['/c', 'start', '', widget.filePath]);
+    } catch (_) {}
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override
@@ -57,7 +71,7 @@ class _MediaViewerScreenState extends State<MediaViewerScreen> {
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
-          widget.isVideo ? 'Unable to play this video' : 'Image not available',
+          widget.isVideo ? 'Opening in external player...' : 'Image not available',
           style: const TextStyle(color: Colors.white70),
           textAlign: TextAlign.center,
         ),

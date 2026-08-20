@@ -855,14 +855,7 @@ class _ChatBubble extends StatelessWidget {
         );
       case ChatMessageType.video:
         return GestureDetector(
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => MediaViewerScreen(
-                filePath: msg.filePath,
-                isVideo: true,
-              ),
-            ),
-          ),
+          onTap: () => onOpenFile(msg.filePath),
           child: Container(
             width: 180,
             height: 120,

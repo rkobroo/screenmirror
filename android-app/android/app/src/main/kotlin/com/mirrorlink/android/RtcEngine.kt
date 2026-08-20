@@ -510,6 +510,7 @@ class RtcEngine(
         override fun onRemoveStream(stream: org.webrtc.MediaStream?) = Unit
         override fun onDataChannel(channel: DataChannel?) {
             channel ?: return
+            android.util.Log.i(TAG, "onDataChannel label=${channel.label()}")
             when (channel.label()) {
                 CONTROL -> {
                     controlChannel = channel
@@ -623,18 +624,23 @@ class RtcEngine(
         }
         override fun onMessage(buffer: DataChannel.Buffer?) {
             buffer ?: return
+            android.util.Log.i(TAG, "control onMessage binary=${buffer.binary}")
             if (buffer.binary) return
             val bytes = ByteArray(buffer.data.remaining())
             buffer.data.get(bytes)
+            android.util.Log.i(TAG, "control onMessage text=${String(bytes, Charsets.UTF_8).take(200)}")
             handleControl(bytes)
         }
     }
 
     private val filesObserver = object : DataChannel.Observer {
         override fun onBufferedAmountChange(previousAmount: Long) = Unit
-        override fun onStateChange() = Unit
+        override fun onStateChange() {
+            android.util.Log.i(TAG, "files channel state: ${filesChannel?.state()}")
+        }
         override fun onMessage(buffer: DataChannel.Buffer?) {
             buffer ?: return
+            android.util.Log.i("MirrorLinkFile", "filesObserver onMessage binary=${buffer.binary} size=${buffer.data.remaining()}")
             if (!buffer.binary) return
             val bytes = ByteArray(buffer.data.remaining())
             buffer.data.get(bytes)

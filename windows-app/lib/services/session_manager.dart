@@ -523,7 +523,10 @@ class SessionManager extends ChangeNotifier {
   /// "Sending …" chat bubble is added — used for inline chat photos/videos.
   Future<void> sendFileToPhone(String path, {bool chatMessage = true}) async {
     final channel = _files;
-    if (channel == null) return;
+    if (channel == null) {
+      _log('sendFileToPhone: _files channel is NULL — cannot send');
+      return;
+    }
 
     final id = _newId();
     final file = File(path);
@@ -544,6 +547,7 @@ class SessionManager extends ChangeNotifier {
     }
     notifyListeners();
 
+    _log('sendFileToPhone: name=$name size=$size id=$id');
     _sendControl({
       'type': 'file',
       'op': 'send',
@@ -573,6 +577,7 @@ class SessionManager extends ChangeNotifier {
     }
 
     _sendControl({'type': 'file', 'op': 'done', 'id': id});
+    _log('sendFileToPhone: done sent id=$id totalBytes=$offset');
     _updateTransfer(id, done: true);
     final msgIdx = _messages.indexWhere((m) => m.transferId == id);
     if (msgIdx >= 0) {
@@ -659,12 +664,23 @@ class SessionManager extends ChangeNotifier {
             (t) => t.id == id,
             orElse: () => Transfer(id: id, name: file.path.split('\\').last, size: 0, direction: 'from'),
           );
+          final name = transfer.name;
+          final ext = name.split('.').last.toLowerCase();
+          final isVideo = const {
+            'mp4', 'mkv', 'mov', 'avi', 'webm'
+          }.contains(ext);
+          final isImage = const {
+            'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'
+          }.contains(ext);
+          final msgType = isVideo
+              ? ChatMessageType.video
+              : (isImage ? ChatMessageType.image : ChatMessageType.file);
           _messages.add(ChatMessage(
-            text: _isMediaFile(transfer.name) ? '' : '${transfer.name} saved',
+            text: '',
             fromMe: false,
             time: DateTime.now(),
-            type: ChatMessageType.file,
-            fileName: transfer.name,
+            type: msgType,
+            fileName: name,
             filePath: file.path,
             fileSize: transfer.size,
             fileProgress: transfer.size,
