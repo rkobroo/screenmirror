@@ -3,7 +3,6 @@ import 'package:flutter/widgets.dart';
 import 'services/connection_controller.dart';
 import 'services/device_bridge.dart';
 import 'services/discovery_service.dart';
-import 'services/file_transfer_service.dart';
 import 'services/settings_service.dart';
 import 'services/signaling_client.dart';
 
@@ -50,8 +49,6 @@ class AppServices {
   final SignalingClient signaling;
   final DiscoveryService discovery;
   final ConnectionController controller;
-
-  late final FileTransferService files = FileTransferService(bridge);
 
   /// Wire everything up. Call once from [AppServicesScope] construction.
   Future<void> init() async {

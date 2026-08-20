@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -12,39 +13,6 @@ import 'settings_service.dart';
 import 'signaling_server.dart';
 
 enum HostState { idle, paired, negotiating, streaming, error }
-
-@immutable
-class Transfer {
-  const Transfer({
-    required this.id,
-    required this.name,
-    required this.size,
-    required this.direction, // 'to' = PC → phone, 'from' = phone → PC
-    this.received = 0,
-    this.done = false,
-    this.path = '',
-  });
-
-  final String id;
-  final String name;
-  final int size;
-  final String direction;
-  final int received;
-  final bool done;
-  final String path;
-
-  double get fraction => size <= 0 ? 0 : (received / size).clamp(0.0, 1.0);
-
-  Transfer copyWith({int? received, bool? done, String? path}) => Transfer(
-        id: id,
-        name: name,
-        size: size,
-        direction: direction,
-        received: received ?? this.received,
-        done: done ?? this.done,
-        path: path ?? this.path,
-      );
-}
 
 enum ChatMessageType { text, file, image, video }
 
@@ -60,7 +28,6 @@ class ChatMessage {
     this.fileSize = 0,
     this.fileProgress = 0,
     this.fileDone = false,
-    this.transferId = '',
   });
 
   final String text;
@@ -72,10 +39,8 @@ class ChatMessage {
   final int fileSize;
   final int fileProgress;
   final bool fileDone;
-  final String transferId;
 
-  double get fraction =>
-      fileSize <= 0 ? 0 : (fileProgress / fileSize).clamp(0.0, 1.0);
+  double get fraction => fileSize <= 0 ? 0 : (fileProgress / fileSize).clamp(0.0, 1.0);
 
   ChatMessage copyWith({
     String? text,
@@ -86,9 +51,7 @@ class ChatMessage {
     int? fileSize,
     int? fileProgress,
     bool? fileDone,
-    String? transferId,
-  }) =>
-      ChatMessage(
+  }) => ChatMessage(
         text: text ?? this.text,
         fromMe: fromMe ?? this.fromMe,
         time: time,
@@ -98,13 +61,48 @@ class ChatMessage {
         fileSize: fileSize ?? this.fileSize,
         fileProgress: fileProgress ?? this.fileProgress,
         fileDone: fileDone ?? this.fileDone,
-        transferId: transferId ?? this.transferId,
       );
 }
 
-/// Owns the WebRTC session with the connected phone: negotiates the answer,
-/// feeds the incoming video track to the viewer renderer, and manages the
-/// `control` + `files` data channels.
+@immutable
+class Transfer {
+  const Transfer({
+    required this.id,
+    required this.name,
+    required this.size,
+    required this.direction,
+    this.received = 0,
+    this.done = false,
+  });
+
+  final String id;
+  final String name;
+  final int size;
+  final String direction;
+  final int received;
+  final bool done;
+
+  double get fraction => size <= 0 ? 0 : (received / size).clamp(0.0, 1.0);
+
+  Transfer copyWith({int? received, bool? done}) => Transfer(
+        id: id,
+        name: name,
+        size: size,
+        direction: direction,
+        received: received ?? this.received,
+        done: done ?? this.done,
+      );
+}
+
+class _IncomingFile {
+  _IncomingFile(this.path, this.sink);
+  final String path;
+  final IOSink sink;
+  bool doneReceived = false;
+  int received = 0;
+  int size = 0;
+}
+
 class SessionManager extends ChangeNotifier {
   SessionManager({required this.settings});
 
@@ -119,12 +117,12 @@ class SessionManager extends ChangeNotifier {
 
   final List<Transfer> _transfers = [];
   final List<ChatMessage> _messages = [];
+  final Map<String, _IncomingFile> _incoming = {};
   final Random _random = Random.secure();
 
   RTCPeerConnection? _pc;
   final RTCVideoRenderer _renderer = RTCVideoRenderer();
   RTCDataChannel? _control;
-  RTCDataChannel? _files;
   bool _rendererReady = false;
 
   HostState get state => _state;
@@ -138,12 +136,8 @@ class SessionManager extends ChangeNotifier {
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   bool get isStreaming => _state == HostState.streaming;
 
-  // ---- inbound file bookkeeping (phone → PC) --------------------------------
-  final Map<String, _IncomingFile> _incoming = {};
-
   SignalingServer? _server;
 
-  /// Wire up to a running [SignalingServer].
   void attach(SignalingServer server) {
     _server = server;
     server.onOffer = _onOffer;
@@ -152,19 +146,13 @@ class SessionManager extends ChangeNotifier {
     server.onSessionClose = _onSessionClose;
   }
 
-  // ---- diagnostics ------------------------------------------------------------
-
-  /// Append a timestamped line to %APPDATA%\com.mirrorlink\mirrorlink_windows\session.log
-  /// so negotiation failures are visible even though the dashboard hides them.
   void _log(String message) {
     try {
       final home = Platform.environment['APPDATA'] ??
           Platform.environment['USERPROFILE'] ??
           '.';
       final dir = Directory('$home\\com.mirrorlink\\mirrorlink_windows');
-      if (!dir.existsSync()) {
-        dir.createSync(recursive: true);
-      }
+      if (!dir.existsSync()) dir.createSync(recursive: true);
       File('${dir.path}\\session.log').writeAsStringSync(
         '[${DateTime.now().toIso8601String()}] $message\n',
         mode: FileMode.append,
@@ -178,10 +166,8 @@ class SessionManager extends ChangeNotifier {
   Future<void> _onOffer(String session, String sdp) async {
     _startHeartbeat();
     _log('onOffer: session=$session sdpLen=${sdp.length}');
-    _log('onOffer sdp: ${sdp.replaceAll(RegExp(r'\r\n'), ' | ').replaceAll('\n', ' / ')}');
     try {
-      await _negotiate(session, sdp)
-          .timeout(const Duration(seconds: 30));
+      await _negotiate(session, sdp).timeout(const Duration(seconds: 30));
     } catch (e, st) {
       _log('onOffer FAILED: $e\n$st');
       _fail('Negotiation failed: $e');
@@ -189,41 +175,27 @@ class SessionManager extends ChangeNotifier {
   }
 
   Future<void> _setRemoteOffer(RTCPeerConnection pc, String sdp) async {
-    // NOTE: RTCSessionDescription(sdp, type) — sdp FIRST, type second.
-    // Passing ('offer', sdp) sends sdp='offer', type=<sdp>, so native
-    // rtc_sdp_type_from_string() returns -1 and setRemoteDescription fails
-    // with "Invalid type or sdp".
     await pc.setRemoteDescription(RTCSessionDescription(sdp, 'offer'));
   }
 
   Future<void> _negotiate(String session, String sdp) async {
-    _log('negotiate: ensurePeer...');
     await _ensurePeer();
     final pc = _pc!;
     _setState(HostState.negotiating);
 
-    _log('negotiate: setRemoteDescription...');
     await _setRemoteOffer(pc, sdp);
 
-    _log('negotiate: createAnswer...');
     var sdpText = (await pc.createAnswer({'offerToReceiveVideo': true})).sdp ?? '';
-    _log('negotiate: createAnswer ok len=${sdpText.length}');
-
-    // Inject bitrate hint so the phone encoder respects it.
-    final bitrateKbps = 4000; // 4 Mbps default
+    final bitrateKbps = 4000;
     sdpText = _injectBitrate(sdpText, bitrateKbps);
 
     final answer = RTCSessionDescription(sdpText, 'answer');
-    _log('negotiate: setLocalDescription...');
     await pc.setLocalDescription(answer);
-    _log('negotiate: setLocalDescription ok');
 
     _sendToPhone(session, {'t': 'answer', 'sdp': sdpText});
-    _log('negotiate: answer sent to $session');
   }
 
   void _onIce(String session, Map<String, dynamic> cand) {
-    _log('onIce: session=$session cand=${(cand['candidate'] as String? ?? '').split(' ').take(8).join(' ')}');
     _pc?.addCandidate(RTCIceCandidate(
       cand['candidate'] as String? ?? '',
       cand['sdpMid'] as String?,
@@ -232,19 +204,14 @@ class SessionManager extends ChangeNotifier {
   }
 
   void _onSessionOpen(String session, String ip) {
-    _log('session open: $session ip=$ip');
     _device = DeviceSession(
-      id: session,
-      name: 'Android phone',
-      ip: ip,
-      connectedAt: DateTime.now(),
-      status: DeviceStatus.paired,
+      id: session, name: 'Android phone', ip: ip,
+      connectedAt: DateTime.now(), status: DeviceStatus.paired,
     );
     _setState(HostState.paired);
   }
 
   void _onSessionClose(String session) {
-    _log('session close: $session');
     if (_device?.id == session) {
       _recordHistory();
       _device = null;
@@ -254,39 +221,22 @@ class SessionManager extends ChangeNotifier {
 
   Future<void> _ensurePeer() async {
     if (_pc != null) {
-      _log('ensurePeer: tearing down stale peer from previous session');
       try { await _pc?.close(); } catch (_) {}
       _pc = null;
     }
-
     if (!_rendererReady) {
-      _log('ensurePeer: renderer.initialize()...');
-      _renderer.onFirstFrameRendered = () {
-        _log('renderer: didFirstFrameRendered — frames ARE reaching the texture');
-      };
-      _renderer.onResize = () {
-        final v = _renderer.value;
-        _log('renderer: size=${v.width}x${v.height} renderVideo=${v.renderVideo}');
-      };
       await _renderer.initialize();
       _rendererReady = true;
-      _log('ensurePeer: renderer ready');
     }
-
-    _log('ensurePeer: createPeerConnection()...');
     final pc = await createPeerConnection({
-      'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}, {'urls': 'stun:stun1.l.google.com:19302'}],
+      'iceServers': [
+        {'urls': 'stun:stun.l.google.com:19302'},
+        {'urls': 'stun:stun1.l.google.com:19302'},
+      ],
     });
-    _log('ensurePeer: pc created');
 
-    pc.onDataChannel = (channel) {
-      _log('onDataChannel: label=${channel.label}');
-      _onDataChannel(channel);
-    };
-    pc.onTrack = (event) {
-      _log('onTrack: kind=${event.track.kind} streams=${event.streams.length}');
-      _onTrack(event);
-    };
+    pc.onDataChannel = (channel) => _onDataChannel(channel);
+    pc.onTrack = (event) => _onTrack(event);
     pc.onIceCandidate = (candidate) {
       final session = _device?.id;
       if (session != null) {
@@ -305,7 +255,6 @@ class SessionManager extends ChangeNotifier {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected) {
         _device?.status = DeviceStatus.streaming;
         _setState(HostState.streaming);
-        _scheduleStatsFetches();
       } else if (state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
           state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
         _stopHeartbeat();
@@ -318,31 +267,26 @@ class SessionManager extends ChangeNotifier {
   }
 
   void _onDataChannel(RTCDataChannel channel) {
-    channel.onMessage = (message) {
-      if (channel.label == 'control') {
-        _onControlMessage(message);
-      } else if (channel.label == 'files') {
-        if (message.isBinary) {
-          _onFileChunk(message.binary);
-        }
-      }
-    };
+    _log('onDataChannel: label=${channel.label}');
     if (channel.label == 'control') {
       _control = channel;
-    } else if (channel.label == 'files') {
-      _files = channel;
+      channel.onMessage = (message) {
+        if (message.isBinary) {
+          _onFileChunk(message.binary);
+        } else {
+          _onControlMessage(message);
+        }
+      };
     }
   }
 
   void _onTrack(RTCTrackEvent event) {
     if (event.track.kind != 'video') return;
     if (event.streams.isNotEmpty) {
-      _log('onTrack: set srcObject stream=${event.streams.first.id} ownerTag=${event.streams.first.ownerTag} track=${event.track.id}');
       _renderer.srcObject = event.streams.first;
     } else {
       createLocalMediaStream('phone-screen').then((stream) {
         stream.addTrack(event.track);
-        _log('onTrack: no streams, wrapped track in stream id=${stream.id}');
         _renderer.srcObject = stream;
       });
     }
@@ -350,7 +294,7 @@ class SessionManager extends ChangeNotifier {
     _setState(HostState.streaming);
   }
 
-  // ---- PC-side receive diagnostics -------------------------------------------
+  // ---- heartbeat -------------------------------------------------------------
 
   Timer? _hbTimer;
   int _hb = 0;
@@ -358,10 +302,7 @@ class SessionManager extends ChangeNotifier {
   void _startHeartbeat() {
     _stopHeartbeat();
     _hb = 0;
-    _hbTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _hb++;
-      _log('hb: $_hb');
-    });
+    _hbTimer = Timer.periodic(const Duration(seconds: 1), (_) { _hb++; });
   }
 
   void _stopHeartbeat() {
@@ -369,48 +310,18 @@ class SessionManager extends ChangeNotifier {
     _hbTimer = null;
   }
 
-  void _scheduleStatsFetches() {
-    Timer(const Duration(seconds: 2), () => _fetchStats('t+2s'));
-    Timer(const Duration(seconds: 8), () => _fetchStats('t+8s'));
-  }
-
-  Future<void> _fetchStats(String label) async {
-    final pc = _pc;
-    if (pc == null) {
-      _log('pcstats: $label pc-null');
-      return;
-    }
-    _log('pcstats: $label start');
-    try {
-      final reports = await pc.getStats().timeout(const Duration(seconds: 3));
-      final types = <String>{};
-      for (final r in reports) {
-        types.add(r.type);
-        if (r.type == 'inbound-rtp' && r.values['kind'] == 'video') {
-          final v = r.values;
-          _log('pcstats: $label video bytes=${v['bytesReceived']} packets=${v['packetsReceived']} framesRcvd=${v['framesReceived']} framesDecoded=${v['framesDecoded']} dropped=${v['framesDropped']} keyDecoded=${v['keyFramesDecoded']} decoder=${v['decoderImplementation']} codec=${v['codecId']} jitter=${v['jitter']}');
-        }
-      }
-      _log('pcstats: $label done reports=${reports.length} types=$types');
-    } catch (e) {
-      _log('pcstats: $label error $e');
-    }
-  }
+  // ---- control messages (text) -----------------------------------------------
 
   void _onControlMessage(RTCDataChannelMessage message) {
-    final raw = message.isBinary
-        ? String.fromCharCodes(message.binary)
-        : message.text;
+    final raw = message.isBinary ? String.fromCharCodes(message.binary) : message.text;
     final Map<String, dynamic> json;
     try {
       json = jsonDecode(raw) as Map<String, dynamic>;
     } catch (_) {
-      _log('control msg PARSE FAILED: raw=${raw.length > 200 ? raw.substring(0, 200) : raw}');
       return;
     }
 
-      _log('control msg type=${json['type']}');
-      switch (json['type']) {
+    switch (json['type']) {
       case 'clipboard':
         _applyIncomingClipboard(json['text'] as String? ?? '');
         break;
@@ -418,7 +329,6 @@ class SessionManager extends ChangeNotifier {
         _sendControl({'type': 'pong'});
         break;
       case 'stats':
-        _log('phone stats: fps=${json['fps']} bps=${json['bps']}');
         _fps = (json['fps'] as num?)?.toInt() ?? _fps;
         _bps = (json['bps'] as num?)?.toInt() ?? _bps;
         notifyListeners();
@@ -428,22 +338,16 @@ class SessionManager extends ChangeNotifier {
         final h = (json['height'] as num?)?.toDouble() ?? 0;
         if (w > 0 && h > 0) {
           _captureSize = Size(w, h);
-          _log('phone dimensions: ${w}x$h');
           notifyListeners();
         }
         break;
       case 'chat':
         final text = json['text'] as String? ?? '';
-        _log('CHAT RECEIVED: "$text" isEmpty=${text.isEmpty}');
-        // Skip the `[Photo: …]` / `[Video: …]` control notices — the actual
-        // media arrives as a separate file message with a thumbnail.
         if (text.isNotEmpty &&
             !text.startsWith('[Photo:') &&
             !text.startsWith('[Video:')) {
           _messages.add(ChatMessage(
-            text: text,
-            fromMe: false,
-            time: DateTime.now(),
+            text: text, fromMe: false, time: DateTime.now(),
           ));
           notifyListeners();
         }
@@ -456,7 +360,7 @@ class SessionManager extends ChangeNotifier {
     }
   }
 
-  // ---- clipboard (PC → phone) ------------------------------------------------
+  // ---- clipboard -------------------------------------------------------------
 
   Future<void> _applyIncomingClipboard(String text) async {
     if (text.isEmpty || !settings.app.notifications) return;
@@ -464,20 +368,16 @@ class SessionManager extends ChangeNotifier {
     onIncomingClipboard?.call(text);
   }
 
-  /// Called by the clipboard watcher when the PC clipboard changes.
   Future<void> sendClipboard(String text) async {
     if (!isStreaming || text.isEmpty) return;
     _sendControl({'type': 'clipboard', 'text': text});
     onClipboardSent?.call(text);
   }
 
-  /// Set when the phone pushes clipboard text to the PC (used to suppress the
-  /// PC→phone echo loop in the clipboard watcher).
   void Function(String text)? onIncomingClipboard;
   void Function(String text)? onClipboardSent;
-  void Function(String name, String path)? onFileReceived;
 
-  // ---- remote input (PC → phone) ---------------------------------------------
+  // ---- remote input ----------------------------------------------------------
 
   void sendTouch(double x, double y, int action) =>
       _sendControl({'type': 'input', 'kind': 'touch', 'x': x, 'y': y, 'action': action});
@@ -491,20 +391,14 @@ class SessionManager extends ChangeNotifier {
   void sendKey(int code, int action) =>
       _sendControl({'type': 'input', 'kind': 'key', 'code': code, 'action': action});
 
-  void sendText(String value) => _sendControl({'type': 'input', 'kind': 'text', 'value': value});
+  void sendText(String value) =>
+      _sendControl({'type': 'input', 'kind': 'text', 'value': value});
 
-  /// Send a chat text message and add it to the local message list.
   void sendChatMessage(String text) {
     if (text.isEmpty) return;
-    _messages.add(ChatMessage(
-      text: text,
-      fromMe: true,
-      time: DateTime.now(),
-    ));
+    _messages.add(ChatMessage(text: text, fromMe: true, time: DateTime.now()));
     notifyListeners();
-    if (_control != null) {
-      _sendControl({'type': 'chat', 'text': text});
-    }
+    _sendControl({'type': 'chat', 'text': text});
   }
 
   void sendSysButton(String button) =>
@@ -516,15 +410,22 @@ class SessionManager extends ChangeNotifier {
   void sendMedia(String action) =>
       _sendControl({'type': 'input', 'kind': 'media', 'action': action});
 
-  // ---- file transfer (PC → phone) ---------------------------------------------
+  // ---- file transfer PC → phone (through single control channel) -------------
 
-  /// Stream a local file to the phone. When [chatMessage] is false the
-  /// transfer still happens (and shows in the transfers card) but no extra
-  /// "Sending …" chat bubble is added — used for inline chat photos/videos.
+  String _newId() => _random.nextInt(0x7FFFFFFF).toRadixString(16);
+
+  bool _isMediaFile(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    return const {
+      'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
+      'mp4', 'mkv', 'mov', 'avi', 'webm'
+    }.contains(ext);
+  }
+
   Future<void> sendFileToPhone(String path, {bool chatMessage = true}) async {
-    final channel = _files;
-    if (channel == null) {
-      _log('sendFileToPhone: _files channel is NULL — cannot send');
+    final ch = _control;
+    if (ch == null) {
+      _log('sendFileToPhone: _control is NULL');
       return;
     }
 
@@ -539,26 +440,26 @@ class SessionManager extends ChangeNotifier {
         text: 'Sending $name',
         fromMe: true,
         time: DateTime.now(),
-        type: ChatMessageType.file,
+        type: _isMediaFile(name)
+            ? (const {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(name.split('.').last.toLowerCase())
+                ? ChatMessageType.image
+                : ChatMessageType.video)
+            : ChatMessageType.file,
         fileName: name,
         fileSize: size,
-        transferId: id,
       ));
     }
     notifyListeners();
 
-    _log('sendFileToPhone: name=$name size=$size id=$id');
+    // 1. Send control message
     _sendControl({
-      'type': 'file',
-      'op': 'send',
-      'id': id,
-      'name': name,
-      'size': size,
-      'mime': _mimeFromExtension(name),
+      'type': 'file', 'op': 'send', 'id': id,
+      'name': name, 'size': size,
     });
 
-    final header = ByteData(24);
+    // 2. Send binary chunks
     final idBytes = Uint8List.fromList(utf8.encode(id).take(16).toList());
+    final header = ByteData(24);
     header.buffer.asUint8List().setRange(0, idBytes.length, idBytes);
 
     final stream = file.openRead();
@@ -568,29 +469,26 @@ class SessionManager extends ChangeNotifier {
       frame.buffer.asUint8List().setAll(0, header.buffer.asUint8List());
       frame.buffer.asUint8List().setRange(24, 24 + chunk.length, chunk);
       frame.setUint64(16, offset);
-      // send() awaits the native stack, which provides natural backpressure.
-      await channel.send(RTCDataChannelMessage.fromBinary(
-        frame.buffer.asUint8List(),
-      ));
+      await ch.send(RTCDataChannelMessage.fromBinary(frame.buffer.asUint8List()));
       offset += chunk.length;
       _updateTransfer(id, received: offset);
     }
 
+    // 3. Send done
     _sendControl({'type': 'file', 'op': 'done', 'id': id});
-    _log('sendFileToPhone: done sent id=$id totalBytes=$offset');
     _updateTransfer(id, done: true);
-    final msgIdx = _messages.indexWhere((m) => m.transferId == id);
+
+    // Update the chat message to show sent
+    final msgIdx = _messages.indexWhere((m) =>
+        m.type != ChatMessageType.text && m.fileName == name && m.fromMe);
     if (msgIdx >= 0) {
       _messages[msgIdx] = _messages[msgIdx].copyWith(text: '$name sent', fileDone: true);
     }
     notifyListeners();
   }
 
-  /// Send a photo in chat, showing a local thumbnail immediately and
-  /// transferring the file to the phone.
   void sendPhotoMessage(String path, String fileName) {
-    final name =
-        fileName.isNotEmpty ? fileName : File(path).uri.pathSegments.last;
+    final name = fileName.isNotEmpty ? fileName : File(path).uri.pathSegments.last;
     _messages.add(ChatMessage(
       text: '[Photo: $name]',
       fromMe: true,
@@ -600,15 +498,12 @@ class SessionManager extends ChangeNotifier {
       fileName: name,
     ));
     notifyListeners();
-    if (_control != null) _sendControl({'type': 'chat', 'text': '[Photo: $name]'});
+    _sendControl({'type': 'chat', 'text': '[Photo: $name]'});
     sendFileToPhone(path, chatMessage: false);
   }
 
-  /// Send a video in chat, showing a local thumbnail immediately and
-  /// transferring the file to the phone.
   void sendVideoMessage(String path, String fileName) {
-    final name =
-        fileName.isNotEmpty ? fileName : File(path).uri.pathSegments.last;
+    final name = fileName.isNotEmpty ? fileName : File(path).uri.pathSegments.last;
     _messages.add(ChatMessage(
       text: '[Video: $name]',
       fromMe: true,
@@ -618,19 +513,11 @@ class SessionManager extends ChangeNotifier {
       fileName: name,
     ));
     notifyListeners();
-    if (_control != null) _sendControl({'type': 'chat', 'text': '[Video: $name]'});
+    _sendControl({'type': 'chat', 'text': '[Video: $name]'});
     sendFileToPhone(path, chatMessage: false);
   }
 
-  // ---- inbound file transfer (phone → PC) --------------------------------------
-
-  bool _isMediaFile(String name) {
-    final ext = name.split('.').last.toLowerCase();
-    return const {
-      'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp',
-      'mp4', 'mkv', 'mov', 'avi', 'webm'
-    }.contains(ext);
-  }
+  // ---- inbound file transfer (phone → PC) -----------------------------------
 
   void _onFileControl(Map<String, dynamic> json) {
     final id = json['id'] as String? ?? '';
@@ -639,8 +526,6 @@ class SessionManager extends ChangeNotifier {
         final name = json['name'] as String? ?? 'file';
         final size = (json['size'] as num?)?.toInt() ?? 0;
         _transfers.insert(0, Transfer(id: id, name: name, size: size, direction: 'from'));
-        // For chat photos/videos the thumbnail arrives on completion, so don't
-        // show the raw filename as a separate bubble here.
         if (!_isMediaFile(name)) {
           _messages.add(ChatMessage(
             text: 'Receiving $name',
@@ -649,44 +534,24 @@ class SessionManager extends ChangeNotifier {
             type: ChatMessageType.file,
             fileName: name,
             fileSize: size,
-            transferId: id,
           ));
         }
         notifyListeners();
         break;
       case 'done':
-        final file = _incoming.remove(id);
+        final file = _incoming[id];
         if (file != null) {
-          file.sink.close();
-          _updateTransfer(id, done: true, path: file.path);
-          _log('file received: ${file.path}');
-          final transfer = _transfers.firstWhere(
-            (t) => t.id == id,
-            orElse: () => Transfer(id: id, name: file.path.split('\\').last, size: 0, direction: 'from'),
-          );
-          final name = transfer.name;
-          final ext = name.split('.').last.toLowerCase();
-          final isVideo = const {
-            'mp4', 'mkv', 'mov', 'avi', 'webm'
-          }.contains(ext);
-          final isImage = const {
-            'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'
-          }.contains(ext);
-          final msgType = isVideo
-              ? ChatMessageType.video
-              : (isImage ? ChatMessageType.image : ChatMessageType.file);
-          _messages.add(ChatMessage(
-            text: '',
-            fromMe: false,
-            time: DateTime.now(),
-            type: msgType,
-            fileName: name,
-            filePath: file.path,
-            fileSize: transfer.size,
-            fileProgress: transfer.size,
-            fileDone: true,
-          ));
-          onFileReceived?.call(transfer.name, file.path);
+          file.doneReceived = true;
+          if (file.size > 0 && file.received >= file.size) {
+            _finalizeIncoming(id, file);
+          } else if (file.size <= 0) {
+            _finalizeIncoming(id, file);
+          } else {
+            Timer(const Duration(seconds: 5), () {
+              final f = _incoming[id];
+              if (f != null) _finalizeIncoming(id, f);
+            });
+          }
         }
         break;
       case 'error':
@@ -707,19 +572,25 @@ class SessionManager extends ChangeNotifier {
     if (file == null) return;
     _incoming[id] = file;
     file.sink.add(payload);
-    _updateTransfer(id, received: offset + payload.length);
+    file.received = offset + payload.length;
+    _updateTransfer(id, received: file.received);
+    if (file.doneReceived && file.size > 0 && file.received >= file.size) {
+      _finalizeIncoming(id, file);
+    }
   }
 
   _IncomingFile? _openIncoming(String id) {
     try {
       final dir = _saveDirectory();
-      final name = _transfers.firstWhere(
+      final transfer = _transfers.firstWhere(
         (t) => t.id == id,
         orElse: () => Transfer(id: id, name: 'file', size: 0, direction: 'from'),
-      ).name;
-      final path = _uniquePath(dir, name);
+      );
+      final path = _uniquePath(dir, transfer.name);
       final sink = File(path).openWrite();
-      return _IncomingFile(path, sink);
+      final f = _IncomingFile(path, sink);
+      f.size = transfer.size;
+      return f;
     } catch (_) {
       return null;
     }
@@ -730,10 +601,55 @@ class SessionManager extends ChangeNotifier {
     if (configured.isNotEmpty) {
       return Directory(configured)..createSync(recursive: true);
     }
-    final home = Platform.environment['USERPROFILE'] ??
-        Platform.environment['HOME'] ??
-        '.';
+    final home = Platform.environment['USERPROFILE'] ?? Platform.environment['HOME'] ?? '.';
     return Directory('$home\\Documents\\MirrorLink')..createSync(recursive: true);
+  }
+
+  void _finalizeIncoming(String id, _IncomingFile file) {
+    if (!_incoming.containsKey(id)) return;
+    _incoming.remove(id);
+    file.sink.flush();
+    file.sink.close();
+    _log('file finalized: ${file.path} (${file.received}/${file.size} bytes)');
+    _updateTransfer(id, done: true);
+
+    final transfer = _transfers.firstWhere(
+      (t) => t.id == id,
+      orElse: () => Transfer(id: id, name: file.path.split(Platform.pathSeparator).last, size: 0, direction: 'from'),
+    );
+    final name = transfer.name;
+    final ext = name.split('.').last.toLowerCase();
+    final isVideo = const {'mp4', 'mkv', 'mov', 'avi', 'webm'}.contains(ext);
+    final isImage = const {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(ext);
+    final msgType = isVideo ? ChatMessageType.video : (isImage ? ChatMessageType.image : ChatMessageType.file);
+    _messages.add(ChatMessage(
+      text: '',
+      fromMe: false,
+      time: DateTime.now(),
+      type: msgType,
+      fileName: name,
+      filePath: file.path,
+      fileSize: transfer.size,
+      fileProgress: transfer.size,
+      fileDone: true,
+    ));
+    onFileReceived?.call(transfer.name, file.path);
+  }
+
+  void Function(String name, String path)? onFileReceived;
+
+  // ---- misc ------------------------------------------------------------------
+
+  void _updateTransfer(String id, {int? received, bool? done}) {
+    final index = _transfers.indexWhere((t) => t.id == id);
+    if (index >= 0) {
+      _transfers[index] = _transfers[index].copyWith(received: received, done: done);
+    }
+    final msgIdx = _messages.indexWhere((m) => m.fileName == _transfers.where((t) => t.id == id).firstOrNull?.name);
+    if (msgIdx >= 0) {
+      _messages[msgIdx] = _messages[msgIdx].copyWith(fileProgress: received, fileDone: done);
+    }
+    notifyListeners();
   }
 
   String _uniquePath(Directory dir, String name) {
@@ -742,33 +658,10 @@ class SessionManager extends ChangeNotifier {
     final dot = name.lastIndexOf('.');
     final base = dot > 0 ? name.substring(0, dot) : name;
     final ext = dot > 0 ? name.substring(dot) : '';
-    for (var i = 1; ; i++) {
+    for (var i = 1;; i++) {
       candidate = File('${dir.path}\\$base ($i)$ext');
       if (!candidate.existsSync()) return candidate.path;
     }
-  }
-
-  // ---- misc --------------------------------------------------------------------
-
-  void _updateTransfer(String id, {int? received, bool? done, String? path}) {
-    final index = _transfers.indexWhere((t) => t.id == id);
-    if (index >= 0) {
-      _transfers[index] = _transfers[index].copyWith(
-        received: received,
-        done: done,
-        path: path,
-      );
-    }
-    // Also update the corresponding chat message.
-    final msgIdx = _messages.indexWhere((m) => m.transferId == id);
-    if (msgIdx >= 0) {
-      _messages[msgIdx] = _messages[msgIdx].copyWith(
-        fileProgress: received,
-        fileDone: done,
-        filePath: path,
-      );
-    }
-    notifyListeners();
   }
 
   String _mimeFromExtension(String name) {
@@ -790,8 +683,6 @@ class SessionManager extends ChangeNotifier {
       'apk' => 'application/vnd.android.package-archive',
       'zip' => 'application/zip',
       'txt' => 'text/plain',
-      'html' => 'text/html',
-      'json' => 'application/json',
       _ => 'application/octet-stream',
     };
   }
@@ -838,18 +729,13 @@ class SessionManager extends ChangeNotifier {
     }
   }
 
-  String _newId() => _random.nextInt(0x7FFFFFFF).toRadixString(16);
-
   Future<void> close() async {
     _recordHistory();
     _stopHeartbeat();
     _incoming.forEach((_, f) => f.sink.close());
     _incoming.clear();
     _control = null;
-    _files = null;
-    try {
-      await _pc?.close();
-    } catch (_) {}
+    try { await _pc?.close(); } catch (_) {}
     _pc = null;
     if (_rendererReady) {
       _renderer.dispose();
@@ -867,10 +753,3 @@ class SessionManager extends ChangeNotifier {
     super.dispose();
   }
 }
-
-class _IncomingFile {
-  _IncomingFile(this.path, this.sink);
-  final String path;
-  final IOSink sink;
-}
-

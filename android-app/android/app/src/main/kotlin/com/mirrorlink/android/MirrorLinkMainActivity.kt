@@ -231,14 +231,11 @@ class MirrorLinkMainActivity : FlutterActivity(), RtcEngine.Callback {
     }
 
     override fun onFileProgress(id: String, received: Long, total: Long) {
-        emit(
-            "fileProgress",
-            mapOf("id" to id, "received" to received, "total" to total),
-        )
+        emit("fileProgress", mapOf("id" to id, "received" to received, "total" to total))
     }
 
-    override fun onFileDone(id: String, name: String, filePath: String?) {
-        emit("fileDone", mapOf("id" to id, "name" to name, "filePath" to (filePath ?: "")))
+    override fun onFileDone(id: String, name: String, uri: String?) {
+        emit("fileDone", mapOf("id" to id, "name" to name, "filePath" to (uri ?: "")))
     }
 
     override fun onDataChannelOpened(channel: String) {

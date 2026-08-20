@@ -132,18 +132,13 @@ class SignalingServer {
   }
 
   void _handlePair(WebSocket socket, Map<String, dynamic> msg) {
-    final code = msg['code'] as String? ?? '';
-    if (code.isNotEmpty && code == _code && DateTime.now().isBefore(_codeExpiry)) {
-      // Single-use code.
-      regenerateCode();
-      final session = _newSession();
-      _sessionSockets[session] = socket;
-      _socketSessions[socket] = session;
-      socket.add(jsonEncode({'t': 'paired', 'session': session}));
-      onSessionOpen?.call(session, _socketIps[socket] ?? '');
-    } else {
-      socket.add(jsonEncode({'t': 'pairfail', 'reason': 'code'}));
-    }
+    // Auto-accept: no PIN required.
+    regenerateCode();
+    final session = _newSession();
+    _sessionSockets[session] = socket;
+    _socketSessions[socket] = session;
+    socket.add(jsonEncode({'t': 'paired', 'session': session}));
+    onSessionOpen?.call(session, _socketIps[socket] ?? '');
   }
 
   String _newSession() {

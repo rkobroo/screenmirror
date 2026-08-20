@@ -10,9 +10,7 @@ import '../models/device.dart';
 import '../services/session_manager.dart';
 import 'settings_screen.dart';
 import 'viewer_screen.dart';
-import '../widgets/media_viewer.dart';
 
-/// Main window: pairing code, live session, transfers, and history.
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -80,8 +78,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               _SessionCard(services: services),
               const SizedBox(height: 16),
               _ChatCard(services: services),
-              const SizedBox(height: 16),
-              _TransfersCard(services: services),
               const SizedBox(height: 16),
               _HistoryCard(services: services),
             ],
@@ -164,8 +160,7 @@ class _PairingCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Scanning the QR code shown here is coming in a future release; '
-              'the phone can also find this PC automatically.',
+              'The phone can also find this PC automatically.',
               style: theme.textTheme.bodySmall,
             ),
           ],
@@ -266,76 +261,6 @@ class _SessionCard extends StatelessWidget {
       };
 }
 
-class _TransfersCard extends StatelessWidget {
-  const _TransfersCard({required this.services});
-
-  final AppServices services;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final transfers = services.session.transfers;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.swap_vert, color: theme.colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('File transfers',
-                    style: theme.textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w600)),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (transfers.isEmpty)
-              Text('No transfers yet. Send files from the viewer window.',
-                  style: theme.textTheme.bodyMedium)
-            else
-              ...transfers.take(6).map((t) => Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(
-                              t.direction == 'to'
-                                  ? Icons.arrow_downward
-                                  : Icons.arrow_upward,
-                              size: 16,
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(t.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis),
-                            ),
-                            Text(
-                              t.done
-                                  ? 'Done'
-                                  : '${(t.fraction * 100).round()}%',
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                        if (!t.done)
-                          LinearProgressIndicator(value: t.fraction),
-                      ],
-                    ),
-                  )),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _ChatCard extends StatelessWidget {
   const _ChatCard({required this.services});
 
@@ -423,27 +348,18 @@ class _ChatPanelState extends State<_ChatPanel> {
     });
   }
 
-  Future<void> _pickAndSendMedia() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'mp4', 'mkv', 'mov', 'avi', 'webm'],
-    );
+  Future<void> _pickAndSendFile() async {
+    final result = await FilePicker.platform.pickFiles();
     if (result == null || result.files.isEmpty) return;
-    final path = result.files.single.path;
+    final f = result.files.single;
+    final path = f.path;
     if (path == null) return;
-    final name = result.files.single.name;
-    final ext = name.split('.').last.toLowerCase();
-    if (['mp4', 'mkv', 'mov', 'avi', 'webm'].contains(ext)) {
-      widget.services.session.sendVideoMessage(path, name);
-    } else {
-      widget.services.session.sendPhotoMessage(path, name);
-    }
-  }
-
-  void _openFile(String path) {
-    if (Platform.isWindows) {
-      Process.run('cmd', ['/c', 'start', '', path]);
-    }
+    await widget.services.session.sendFileToPhone(path);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+      }
+    });
   }
 
   @override
@@ -470,7 +386,11 @@ class _ChatPanelState extends State<_ChatPanel> {
                   final msg = messages[index];
                   return _DashboardChatBubble(
                     msg: msg,
-                    onOpenFile: _openFile,
+                    onOpenFile: (p) {
+                      try {
+                        Process.run('cmd', ['/c', 'start', '', p]);
+                      } catch (_) {}
+                    },
                   );
                 },
               );
@@ -496,9 +416,9 @@ class _ChatPanelState extends State<_ChatPanel> {
               Row(
                 children: [
                   IconButton(
-                    onPressed: _pickAndSendMedia,
-                    icon: const Icon(Icons.add_photo_alternate, size: 20),
-                    tooltip: 'Send photo or video',
+                    onPressed: _pickAndSendFile,
+                    icon: const Icon(Icons.attach_file, size: 20),
+                    tooltip: 'Send file to phone',
                   ),
                   Expanded(
                     child: TextField(
@@ -562,10 +482,10 @@ class _ChatFullScreenPage extends StatelessWidget {
 }
 
 class _DashboardChatBubble extends StatelessWidget {
-  const _DashboardChatBubble({required this.msg, required this.onOpenFile});
+  const _DashboardChatBubble({required this.msg, this.onOpenFile});
 
   final ChatMessage msg;
-  final void Function(String path) onOpenFile;
+  final void Function(String path)? onOpenFile;
 
   @override
   Widget build(BuildContext context) {
@@ -607,7 +527,7 @@ class _DashboardChatBubble extends StatelessWidget {
               color: bgColor,
               borderRadius: radius,
             ),
-            child: _buildContent(context, textColor),
+            child: _buildContent(textColor),
           ),
           const SizedBox(height: 2),
           Padding(
@@ -622,174 +542,128 @@ class _DashboardChatBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildContent(BuildContext context, Color textColor) {
-    if (msg.type == ChatMessageType.text && !msg.text.startsWith('[Photo:') && !msg.text.startsWith('[Video:')) {
-      return Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Flexible(
-            child: SelectableText(
-              msg.text,
-              style: TextStyle(color: textColor, fontSize: 13),
+  Widget _buildContent(Color textColor) {
+    switch (msg.type) {
+      case ChatMessageType.image:
+        if (msg.filePath.isNotEmpty && File(msg.filePath).existsSync()) {
+          return GestureDetector(
+            onTap: () => onOpenFile?.call(msg.filePath),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.file(File(msg.filePath),
+                  width: 200, height: 130, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                    width: 200,
+                    height: 60,
+                    color: Colors.white12,
+                    child: const Icon(Icons.broken_image, color: Colors.white38),
+                  )),
             ),
-          ),
-          const SizedBox(width: 4),
-          GestureDetector(
-            onTap: () {
-              Clipboard.setData(ClipboardData(text: msg.text));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Copied to clipboard'),
-                  duration: Duration(seconds: 1),
-                ),
-              );
-            },
-            child: Padding(
-              padding: const EdgeInsets.all(2),
-              child: Icon(Icons.copy, size: 14, color: textColor.withAlpha(120)),
-            ),
-          ),
-        ],
-      );
-    }
-
-    final isImage = msg.type == ChatMessageType.image ||
-        (msg.fileName.isNotEmpty && _isImageExt(msg.fileName)) ||
-        (msg.text.startsWith('[Photo:'));
-
-    final isVideo = msg.type == ChatMessageType.video ||
-        (msg.fileName.isNotEmpty && _isVideoExt(msg.fileName)) ||
-        (msg.text.startsWith('[Video:'));
-
-    if (isImage && msg.filePath.isNotEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: GestureDetector(
-              onTap: () => _openMedia(context, msg.filePath, false),
-              child: Image.file(
-                File(msg.filePath),
-                width: 200,
-                height: 130,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(
-                  width: 200,
-                  height: 60,
-                  color: Colors.white12,
-                  child: const Icon(Icons.broken_image, color: Colors.white38),
-                ),
-              ),
-            ),
-          ),
-        ],
-      );
-    }
-
-    if (isVideo && msg.filePath.isNotEmpty) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          GestureDetector(
-            onTap: () => _openMedia(context, msg.filePath, true),
+          );
+        }
+        return _textRow(textColor);
+      case ChatMessageType.video:
+        if (msg.filePath.isNotEmpty && File(msg.filePath).existsSync()) {
+          return GestureDetector(
+            onTap: () => onOpenFile?.call(msg.filePath),
             child: Container(
               width: 200,
               height: 130,
               decoration: BoxDecoration(
                 color: Colors.black87,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(6),
               ),
-              child: const Stack(
-                alignment: Alignment.center,
-                children: [
-                  Icon(Icons.play_circle_filled, color: Colors.white, size: 48),
-                ],
-              ),
+              child: Stack(alignment: Alignment.center, children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Image.file(File(msg.filePath),
+                      width: 200, height: 130, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink()),
+                ),
+                const Icon(Icons.play_circle_filled, size: 48, color: Colors.white),
+              ]),
             ),
-          ),
-        ],
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
+          );
+        }
+        return _textRow(textColor);
+      case ChatMessageType.file:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_fileIcon(msg.fileName), color: textColor.withAlpha(180), size: 18),
-            const SizedBox(width: 6),
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(_fileIcon(msg.fileName),
+                  color: textColor.withAlpha(200), size: 18),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  msg.fileName.isNotEmpty ? msg.fileName : msg.text,
+                  style: TextStyle(color: textColor, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ]),
+            if (msg.fileSize > 0) ...[
+              const SizedBox(height: 4),
+              LinearProgressIndicator(
+                value: msg.fraction,
+                backgroundColor: Colors.white24,
+                color: msg.fileDone ? Colors.greenAccent : Colors.blueAccent,
+                minHeight: 3,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                msg.fileDone
+                    ? 'Done - ${_fmtSize(msg.fileSize)}'
+                    : '${_fmtSize(msg.fileProgress)} / ${_fmtSize(msg.fileSize)}',
+                style: const TextStyle(color: Colors.white54, fontSize: 10),
+              ),
+            ],
+            if (msg.fileDone && msg.filePath.isNotEmpty)
+              GestureDetector(
+                onTap: () => onOpenFile?.call(msg.filePath),
+                child: const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Text('Open file',
+                      style: TextStyle(
+                          color: Colors.blueAccent,
+                          fontSize: 11,
+                          decoration: TextDecoration.underline)),
+                ),
+              ),
+          ],
+        );
+      case ChatMessageType.text:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
             Flexible(
-              child: Text(
-                msg.fileName.isNotEmpty ? msg.fileName : msg.text,
-                style: TextStyle(color: textColor, fontSize: 12),
-                overflow: TextOverflow.ellipsis,
+              child: SelectableText(
+                msg.text,
+                style: TextStyle(color: textColor, fontSize: 13),
+              ),
+            ),
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: msg.text));
+              },
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(Icons.copy, size: 14, color: textColor.withAlpha(120)),
               ),
             ),
           ],
-        ),
-        if (msg.fileSize > 0) ...[
-          const SizedBox(height: 4),
-          LinearProgressIndicator(
-            value: msg.fraction,
-            backgroundColor: Colors.white24,
-            color: msg.fileDone ? Colors.greenAccent : Colors.blueAccent,
-            minHeight: 3,
-          ),
-          const SizedBox(height: 2),
-          Text(
-            msg.fileDone
-                ? 'Done · ${_fmtSize(msg.fileSize)}'
-                : '${_fmtSize(msg.fileProgress)} / ${_fmtSize(msg.fileSize)}',
-            style: TextStyle(color: textColor.withAlpha(140), fontSize: 10),
-          ),
-        ],
-        if (msg.fileDone && msg.filePath.isNotEmpty)
-          GestureDetector(
-            onTap: () => _openFile(msg.filePath),
-            child: const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: Text(
-                'Open file',
-                style: TextStyle(
-                  color: Colors.blueAccent,
-                  fontSize: 11,
-                  decoration: TextDecoration.underline,
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  void _openFile(String path) {
-    if (Platform.isWindows) {
-      Process.run('cmd', ['/c', 'start', '', path]);
+        );
     }
   }
 
-  void _openMedia(BuildContext context, String path, bool isVideo) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => MediaViewerScreen(filePath: path, isVideo: isVideo),
-      ),
+  Widget _textRow(Color textColor) {
+    return SelectableText(
+      msg.text,
+      style: TextStyle(color: textColor, fontSize: 13),
     );
-  }
-
-  static bool _isImageExt(String name) {
-    final ext = name.split('.').last.toLowerCase();
-    return {'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'}.contains(ext);
-  }
-
-  static bool _isVideoExt(String name) {
-    final ext = name.split('.').last.toLowerCase();
-    return {'mp4', 'mkv', 'avi', 'mov', 'webm'}.contains(ext);
   }
 
   static IconData _fileIcon(String name) {
@@ -798,7 +672,6 @@ class _DashboardChatBubble extends StatelessWidget {
     if ({'mp4', 'mkv', 'avi', 'mov', 'webm'}.contains(ext)) return Icons.video_file;
     if ({'mp3', 'wav', 'ogg', 'aac'}.contains(ext)) return Icons.audio_file;
     if (ext == 'pdf') return Icons.picture_as_pdf;
-    if (ext == 'apk') return Icons.android;
     return Icons.insert_drive_file;
   }
 

@@ -5,8 +5,8 @@ import '../models/nearby_device.dart';
 import '../services/connection_controller.dart';
 import '../widgets/device_list.dart';
 
-/// Pairing flow: shows discovered PCs and lets the user enter the 6-digit
-/// pairing code manually.
+/// Pairing flow: shows discovered PCs and lets the user tap to connect
+/// directly (no PIN required).
 class PairingScreen extends StatefulWidget {
   const PairingScreen({super.key});
 
@@ -17,7 +17,6 @@ class PairingScreen extends StatefulWidget {
 }
 
 class _PairingScreenState extends State<PairingScreen> {
-  final _codeController = TextEditingController();
   final _ipController = TextEditingController();
   bool _connecting = false;
 
@@ -39,21 +38,15 @@ class _PairingScreenState extends State<PairingScreen> {
 
   @override
   void dispose() {
-    _codeController.dispose();
     _ipController.dispose();
     super.dispose();
   }
 
   void _connect(NearbyDevice device) async {
     if (_connecting) return;
-    final code = _codeController.text.trim();
-    if (code.length != 6) {
-      _showError('Enter the 6-digit code shown on the PC.');
-      return;
-    }
     setState(() => _connecting = true);
     final services = ServicesScope.of(context);
-    await services.controller.connect(device, code);
+    await services.controller.connect(device, '000000');
     if (mounted) setState(() => _connecting = false);
     _watchConnection(services);
   }
@@ -94,24 +87,11 @@ class _PairingScreenState extends State<PairingScreen> {
             children: [
               if (controller.state == ConnectionState.pairing)
                 const LinearProgressIndicator(),
-              Text('Enter pairing code',
+              Text('Tap a PC to connect',
                   style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _codeController,
-                      keyboardType: TextInputType.number,
-                      maxLength: 6,
-                      decoration: const InputDecoration(
-                        labelText: '6-digit code',
-                        counterText: '',
-                        prefixIcon: Icon(Icons.pin),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
                   Expanded(
                     child: TextField(
                       controller: _ipController,
@@ -123,39 +103,30 @@ class _PairingScreenState extends State<PairingScreen> {
                       ),
                     ),
                   ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                icon: _connecting
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.link),
-                label: const Text('Connect'),
-                onPressed: _connecting
-                    ? null
-                    : () {
-                        final manualIp = _ipController.text.trim();
-                        final base = devices.isNotEmpty
-                            ? devices.first
-                            : NearbyDevice(
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    icon: _connecting
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.link),
+                    label: const Text('Connect'),
+                    onPressed: _connecting
+                        ? null
+                        : () {
+                            final manualIp = _ipController.text.trim();
+                            if (manualIp.isNotEmpty) {
+                              _connect(NearbyDevice(
                                 name: 'Manual entry',
-                                ip: manualIp.isEmpty ? '192.168.1.100' : manualIp,
+                                ip: manualIp,
                                 port: 59661,
-                              );
-                        if (manualIp.isNotEmpty) {
-                          _connect(NearbyDevice(
-                            name: 'Manual entry',
-                            ip: manualIp,
-                            port: 59661,
-                          ));
-                        } else {
-                          _connect(base);
-                        }
-                      },
+                              ));
+                            }
+                          },
+                  ),
+                ],
               ),
               const SizedBox(height: 24),
               Row(

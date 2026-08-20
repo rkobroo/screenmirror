@@ -117,15 +117,13 @@ class DeviceBridge {
   Future<void> setClipboardWatcher(bool enabled) =>
       _channel.invokeMethod<void>('setClipboardWatcher', {'enabled': enabled});
 
-  // ---- file transfer (phone → PC) ------------------------------------------
-
-  /// Stream the SAF [contentUri] (returned by file_picker) to the PC.
-  Future<void> sendFile(String contentUri) =>
-      _channel.invokeMethod<void>('sendFile', {'uri': contentUri});
-
   /// Open a local file (real path, not content URI) via Android Intent.
   Future<void> openFile(String path) =>
       _channel.invokeMethod<void>('openFile', {'path': path});
+
+  /// Stream the SAF [contentUri] (returned by file-picker) to the PC.
+  Future<void> sendFile(String contentUri) =>
+      _channel.invokeMethod<void>('sendFile', {'uri': contentUri});
 
   Future<void> dispose() async {
     await _eventSub?.cancel();
